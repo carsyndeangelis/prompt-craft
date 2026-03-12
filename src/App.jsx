@@ -1,4 +1,3 @@
-// prompt-craft — v1.2
 import { useState, useRef, useEffect, useCallback } from "react";
 
 // ═══════════════════════════════════════════════════════════════
@@ -494,10 +493,13 @@ export default function PromptCraft() {
               ))}
             </div>
 
-            {/* Template toggle */}
-            <div style={{ marginTop: "28px", textAlign: "center" }}>
-              <button onClick={() => setShowTemplates(!showTemplates)} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                {showTemplates ? "Hide templates" : "📋 Or start from a template"}
+            {/* Template & History toggles */}
+            <div style={{ marginTop: "28px", display: "flex", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
+              <button onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates) setShowHistory(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showTemplates ? "rgba(201,168,76,0.3)" : undefined, color: showTemplates ? "#c9a84c" : undefined }}>
+                {showTemplates ? "Hide templates" : "📋 Templates"}
+              </button>
+              <button onClick={() => { setShowHistory(!showHistory); if (!showHistory) setShowTemplates(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showHistory ? "rgba(201,168,76,0.3)" : undefined, color: showHistory ? "#c9a84c" : undefined }}>
+                🕘 History {history.length > 0 && <span style={S.histCount}>{history.length}</span>}
               </button>
             </div>
 
@@ -523,6 +525,42 @@ export default function PromptCraft() {
                       </button>
                     ))}
                   </div>
+                </div>
+              </Fade>
+            )}
+
+            {/* History panel on depth page */}
+            {showHistory && (
+              <Fade>
+                <div style={{ marginTop: "24px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 700, color: "#c9a84c", textTransform: "uppercase", letterSpacing: "1px" }}>Recent Prompts</div>
+                    {history.length > 0 && <button onClick={() => { setHistory([]); Storage.set("history", []); }} className="btn-secondary" style={{ ...S.secBtn, fontSize: "11px", padding: "6px 12px", color: "#5a554c" }}>Clear all</button>}
+                  </div>
+                  {history.length === 0 ? (
+                    <div style={{ padding: "40px 20px", textAlign: "center", borderRadius: "14px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                      <div style={{ fontSize: "28px", marginBottom: "12px" }}>🕘</div>
+                      <div style={{ fontSize: "15px", fontWeight: 500, color: "#8a857c", marginBottom: "6px" }}>No history yet</div>
+                      <div style={{ fontSize: "13px", color: "#5a554c", lineHeight: 1.5 }}>Your generated prompts will appear here so you can reuse them anytime.</div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {history.map((h, i) => (
+                      <div key={i} className="hist-item" style={S.histItem}
+                        onClick={() => { setGeneratedPrompt(h.prompt); setTargetAI(h.targetAI); setCopied(false); setRefineHistory([]); setPromptVersions([h.prompt]); setStep(6); }}>
+                        <div style={S.histTop}>
+                          <div style={{ display: "flex", gap: "6px" }}>
+                            <span style={S.histTag}>{h.targetAI}</span>
+                            <span style={S.histTag}>{h.detail}</span>
+                          </div>
+                          <span style={{ fontSize: "11px", color: "#3a3632" }}>{h.time instanceof Date ? h.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                        </div>
+                        <div style={{ fontSize: "14px", fontWeight: 500, color: "#b0aa9f", marginBottom: "4px" }}>{h.topic}</div>
+                        <div style={{ fontSize: "12px", color: "#5a554c", lineHeight: 1.4 }}>{h.prompt.length > 100 ? h.prompt.slice(0, 100) + "..." : h.prompt}</div>
+                      </div>
+                    ))}
+                  </div>
+                  )}
                 </div>
               </Fade>
             )}
@@ -708,7 +746,7 @@ export default function PromptCraft() {
         )}
 
         {/* ── History ── */}
-        {(step === 0 || history.length > 0) && step !== 3 && step !== 5 && (
+        {history.length > 0 && step !== 3 && step !== 5 && (
           <div style={S.historySection}>
             <button onClick={() => setShowHistory(!showHistory)} style={S.histToggle}>
               <span style={{ display: "inline-block", transition: "transform 0.2s", transform: showHistory ? "rotate(90deg)" : "rotate(0deg)", marginRight: "6px" }}>▸</span>
@@ -716,27 +754,21 @@ export default function PromptCraft() {
             </button>
             {showHistory && (
               <div style={S.histList}>
-                {history.length === 0 ? (
-                  <div style={{ fontSize: "13px", color: "#5a554c", padding: "8px 0" }}>No saved prompts yet.</div>
-                ) : (
-                  <>
-                    {history.map((h, i) => (
-                      <div key={i} className="hist-item" style={S.histItem}
-                        onClick={() => { setGeneratedPrompt(h.prompt); setTargetAI(h.targetAI); setCopied(false); setRefineHistory([]); setPromptVersions([h.prompt]); if (step !== 6) setStep(6); }}>
-                        <div style={S.histTop}>
-                          <div style={{ display: "flex", gap: "6px" }}>
-                            <span style={S.histTag}>{h.targetAI}</span>
-                            <span style={S.histTag}>{h.detail}</span>
-                          </div>
-                          <span style={{ fontSize: "11px", color: "#3a3632" }}>{h.time instanceof Date ? h.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
-                        </div>
-                        <div style={{ fontSize: "14px", fontWeight: 500, color: "#b0aa9f", marginBottom: "4px" }}>{h.topic}</div>
-                        <div style={{ fontSize: "12px", color: "#5a554c", lineHeight: 1.4 }}>{h.prompt.length > 100 ? h.prompt.slice(0, 100) + "..." : h.prompt}</div>
+                {history.map((h, i) => (
+                  <div key={i} className="hist-item" style={S.histItem}
+                    onClick={() => { setGeneratedPrompt(h.prompt); setTargetAI(h.targetAI); setCopied(false); setRefineHistory([]); setPromptVersions([h.prompt]); if (step !== 6) setStep(6); }}>
+                    <div style={S.histTop}>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <span style={S.histTag}>{h.targetAI}</span>
+                        <span style={S.histTag}>{h.detail}</span>
                       </div>
-                    ))}
-                    <button onClick={() => { setHistory([]); Storage.set("history", []); }} className="btn-secondary" style={{ ...S.secBtn, marginTop: "8px", fontSize: "12px", color: "#5a554c" }}>Clear history</button>
-                  </>
-                )}
+                      <span style={{ fontSize: "11px", color: "#3a3632" }}>{h.time instanceof Date ? h.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
+                    </div>
+                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#b0aa9f", marginBottom: "4px" }}>{h.topic}</div>
+                    <div style={{ fontSize: "12px", color: "#5a554c", lineHeight: 1.4 }}>{h.prompt.length > 100 ? h.prompt.slice(0, 100) + "..." : h.prompt}</div>
+                  </div>
+                ))}
+                <button onClick={() => { setHistory([]); Storage.set("history", []); }} className="btn-secondary" style={{ ...S.secBtn, marginTop: "8px", fontSize: "12px", color: "#5a554c" }}>Clear history</button>
               </div>
             )}
           </div>
