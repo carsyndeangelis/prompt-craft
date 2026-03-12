@@ -911,7 +911,7 @@ const S = {
   exportBar: { display: "flex", gap: "8px", marginTop: "16px", flexWrap: "wrap" },
   exportBtn: { padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.015)", color: "#8a857c", fontSize: "12px", fontWeight: 500, cursor: "pointer", transition: "all 0.25s ease" },
 
-  secBtn: { padding: "12px 22px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.75)", background: "transparent", color: "#d0ccc6", fontSize: "13px", fontWeight: 500, cursor: "pointer", transition: "all 0.3s ease" },
+  secBtn: { padding: "12px 22px", borderRadius: "10px", border: "1px solid white", background: "transparent", color: "#d0ccc6", fontSize: "13px", fontWeight: 500, cursor: "pointer", transition: "all 0.3s ease" },
 
   // Versions
   versionsBox: { marginTop: "24px", padding: "18px", borderRadius: "12px", background: "rgba(192,192,192,0.02)", border: "1px solid rgba(192,192,192,0.06)" },
