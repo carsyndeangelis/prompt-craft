@@ -495,10 +495,10 @@ export default function ObsidiaAI() {
 
             {/* Template & History toggles */}
             <div style={{ marginTop: "28px", display: "flex", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
-              <button onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates) setShowHistory(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showTemplates ? "rgba(201,168,76,0.3)" : undefined, color: showTemplates ? "#c9a84c" : undefined }}>
+              <button onClick={() => { setShowTemplates(!showTemplates); if (!showTemplates) setShowHistory(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showTemplates ? "rgba(201,168,76,0.3)" : "white", color: showTemplates ? "#c9a84c" : "#d0ccc6" }}>
                 {showTemplates ? "Hide templates" : "📋 Templates"}
               </button>
-              <button onClick={() => { setShowHistory(!showHistory); if (!showHistory) setShowTemplates(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showHistory ? "rgba(201,168,76,0.3)" : undefined, color: showHistory ? "#c9a84c" : undefined }}>
+              <button onClick={() => { setShowHistory(!showHistory); if (!showHistory) setShowTemplates(false); }} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px", borderColor: showHistory ? "rgba(201,168,76,0.3)" : "white", color: showHistory ? "#c9a84c" : "#d0ccc6" }}>
                 🕘 History {history.length > 0 && <span style={S.histCount}>{history.length}</span>}
               </button>
             </div>
