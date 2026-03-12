@@ -504,7 +504,7 @@ export default function ObsidiaAI() {
           <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Obsidia AI</div>
           <div style={S.slogan}>AI for Students, from Students</div>
           <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span> With <span style={S.goldText}>Obsidia AI</span></h1>
-          <p style={S.subtitle}>The difference between a mediocre AI response and a breakthrough one isn't the AI — it's the prompt. Obsidia AI was built by students who learned this the hard way. Tell us what you need, and we'll craft expert-level prompts that unlock AI's full potential for your essays, research, projects, and beyond.</p>
+          {step === 0 && <p style={S.subtitle}>The difference between a mediocre AI response and a breakthrough one isn't the AI — it's the prompt. Obsidia AI was built by students who learned this the hard way. Tell us what you need, and we'll craft expert-level prompts that unlock AI's full potential for your essays, research, projects, and beyond.</p>}
           <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
         </header>
 
