@@ -266,10 +266,25 @@ export default function ObsidiaAI() {
     return () => document.removeEventListener("keydown", handleTab);
   }, []);
 
-  // ── Auto-scroll ──
+  // ── Scroll to top on initial load ──
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [step, questions, generatedPrompt, showHistory, refineHistory, showTemplates]);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, []);
+
+  // ── Scroll to top on step transitions and panel toggles ──
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [step, showTemplates, showHistory]);
+
+  // ── Scroll to bottom only while actively streaming new content ──
+  useEffect(() => {
+    if (isStreaming) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [generatedPrompt, isStreaming]);
+
+  // ── Scroll to bottom when refinement history grows ──
+  useEffect(() => {
+    if (refineHistory.length > 0) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [refineHistory]);
 
   useEffect(() => {
     if (step === 1) setTimeout(() => aiRef.current?.focus(), 300);
