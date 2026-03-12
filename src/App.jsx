@@ -204,6 +204,8 @@ export default function ObsidiaAI() {
   const [detailLevel, setDetailLevel] = useState(null);
   const [targetAI, setTargetAI] = useState("");
   const [topic, setTopic] = useState("");
+  const [attachedFiles, setAttachedFiles] = useState([]); // [{name, content}]
+  const [isDragOver, setIsDragOver] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [generatedPrompt, setGeneratedPrompt] = useState("");
@@ -321,9 +323,10 @@ export default function ObsidiaAI() {
     setStep(3);
     setError("");
     try {
+      const fileContext = attachedFiles.length ? "\n\nAttached files:\n" + attachedFiles.map(f => `--- ${f.name} ---\n${f.content}`).join("\n\n") : "";
       const raw = await callClaude(
         getQuestionsSystem(detailLevel.id),
-        [{ role: "user", content: `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}` }],
+        [{ role: "user", content: `Target AI: ${targetAI}\nTopic: ${topic}${fileContext}\nDetail level: ${detailLevel.label}` }],
         1000
       );
       const cleaned = raw.replace(/```json|```/g, "").trim();
@@ -348,7 +351,8 @@ export default function ObsidiaAI() {
     setRefineInput("");
     setPromptVersions([]);
 
-    let userContent = `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}`;
+    const fileContext = attachedFiles.length ? "\n\nAttached files:\n" + attachedFiles.map(f => `--- ${f.name} ---\n${f.content}`).join("\n\n") : "";
+    let userContent = `Target AI: ${targetAI}\nTopic: ${topic}${fileContext}\nDetail level: ${detailLevel.label}`;
     if (fromAnswers && questions.length) {
       const qaPairs = questions.map(q => `Q: ${q.question}\nA: ${answers[q.id] || "(skipped)"}`).join("\n\n");
       userContent += `\n\nFollow-up Q&A:\n${qaPairs}`;
@@ -470,10 +474,24 @@ export default function ObsidiaAI() {
     downloadFile(generatedPrompt, `obsidia-ai-${Date.now()}.txt`);
   };
 
+  const readFileAsText = (file) => new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve({ name: file.name, content: e.target.result });
+    reader.readAsText(file);
+  });
+
+  const handleFiles = async (files) => {
+    const results = await Promise.all(Array.from(files).map(readFileAsText));
+    setAttachedFiles(prev => {
+      const existing = new Set(prev.map(f => f.name));
+      return [...prev, ...results.filter(f => !existing.has(f.name))];
+    });
+  };
+
   const startOver = () => {
     setStep(0); setDetailLevel(null); setTargetAI(""); setTopic(""); setQuestions([]); setAnswers({});
     setGeneratedPrompt(""); setCopied(false); setError(""); setRefineHistory([]); setRefineInput("");
-    setPromptVersions([]); setIsStreaming(false); setShowTemplates(false);
+    setPromptVersions([]); setIsStreaming(false); setShowTemplates(false); setAttachedFiles([]);
   };
 
   const answeredCount = questions.filter(q => answers[q.id]?.trim()).length;
@@ -655,6 +673,29 @@ export default function ObsidiaAI() {
                 placeholder='e.g. "Write a blog post about remote work culture" or "Help me build a 30-day fitness plan"'
                 style={S.textarea} rows={4}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTopic(); } }} />
+              {/* File drop zone */}
+              <div
+                onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={e => { e.preventDefault(); setIsDragOver(false); handleFiles(e.dataTransfer.files); }}
+                style={{ ...S.dropZone, ...(isDragOver ? S.dropZoneActive : {}) }}
+              >
+                <input type="file" multiple id="file-upload" style={{ display: "none" }} onChange={e => handleFiles(e.target.files)} />
+                <label htmlFor="file-upload" style={S.dropZoneLabel}>
+                  <span style={{ fontSize: "18px" }}>📎</span>
+                  <span>Drop files here or <span style={{ color: "#c9a84c", cursor: "pointer", textDecoration: "underline" }}>browse</span></span>
+                </label>
+                {attachedFiles.length > 0 && (
+                  <div style={S.fileList}>
+                    {attachedFiles.map((f, i) => (
+                      <div key={i} style={S.fileChip}>
+                        <span>📄 {f.name}</span>
+                        <button onClick={() => setAttachedFiles(prev => prev.filter((_, j) => j !== i))} style={S.fileChipRemove}>✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <div style={S.cardActions}>
                 <BtnBack onClick={() => { setStep(1); setTopic(""); }} />
                 <BtnPrimary onClick={submitTopic} disabled={!topic.trim()} label={isInstant ? "Generate prompt →" : "Next — Ask me questions →"} />
@@ -976,6 +1017,12 @@ const S = {
   input: { width: "100%", padding: "15px 18px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)", color: "#e8e4db", fontSize: "16px", fontFamily: "'Outfit',sans-serif", transition: "border-color 0.25s" },
   textarea: { width: "100%", padding: "15px 18px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)", color: "#e8e4db", fontSize: "15px", fontFamily: "'Outfit',sans-serif", resize: "vertical", lineHeight: 1.55, transition: "border-color 0.25s" },
   cardActions: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", gap: "12px", flexWrap: "wrap" },
+  dropZone: { marginTop: "12px", border: "1px dashed rgba(255,255,255,0.12)", borderRadius: "10px", padding: "16px 20px", background: "rgba(0,0,0,0.2)", transition: "border-color 0.2s, background 0.2s" },
+  dropZoneActive: { borderColor: "rgba(201,168,76,0.5)", background: "rgba(201,168,76,0.04)" },
+  dropZoneLabel: { display: "flex", alignItems: "center", gap: "10px", color: "#6d675e", fontSize: "13px", cursor: "pointer" },
+  fileList: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "12px" },
+  fileChip: { display: "flex", alignItems: "center", gap: "6px", background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.2)", borderRadius: "6px", padding: "4px 10px", fontSize: "12px", color: "#c9a84c" },
+  fileChipRemove: { background: "none", border: "none", color: "#6d675e", cursor: "pointer", fontSize: "11px", padding: "0", lineHeight: 1 },
 
   loadBox: { textAlign: "center", padding: "70px 20px" },
   loadTitle: { fontSize: "18px", fontWeight: 600, color: "#f0ece4", margin: "0 0 8px", animation: "pulse 1.8s ease infinite" },
