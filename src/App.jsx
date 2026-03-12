@@ -88,7 +88,7 @@ async function streamClaude(systemPrompt, messages, maxTokens, onChunk, onDone) 
 // ═══════════════════════════════════════════════════════════════
 
 const DETAIL_LEVELS = [
-  { id: "instant", label: "Instant", tagline: "No questions asked", desc: "Just tell us the topic and we'll generate a solid prompt immediately.", icon: "⚡", questionCount: 0, maxTokens: 1000 },
+  { id: "instant", label: "Instant", tagline: "No questions asked", desc: "Just tell us the topic and we'll generate a solid prompt immediately.", icon: "⚡", iconColor: "#c9a84c", questionCount: 0, maxTokens: 1000 },
   { id: "standard", label: "Standard", tagline: "A well-rounded prompt", desc: "Good balance of detail and speed. We'll ask 3 questions.", icon: "◈", questionCount: 3, maxTokens: 1500 },
   { id: "detailed", label: "Detailed", tagline: "Comprehensive, expert-level", desc: "Maximum quality. We'll ask 5 questions to build a thorough prompt.", icon: "✦", questionCount: 5, maxTokens: 2500 },
 ];
@@ -104,7 +104,7 @@ const AI_PLATFORMS = [
 // TEMPLATES
 // ═══════════════════════════════════════════════════════════════
 
-const TEMPLATE_CATEGORIES = ["All", "Writing", "Code", "Business", "Creative", "Education", "Data"];
+const TEMPLATE_CATEGORIES = ["All", "Writing", "Code", "Build", "Business", "Creative", "Education", "Data"];
 
 const TEMPLATES = [
   { id: "blog", name: "Blog Post Writer", cat: "Writing", icon: "📝", desc: "Structured blog post with intro, body, and conclusion", depth: "standard", platform: "ChatGPT", topic: "Write a blog post about " },
@@ -128,6 +128,12 @@ const TEMPLATES = [
   { id: "quiz", name: "Quiz Generator", cat: "Education", icon: "❓", desc: "Generate quiz questions with answer key", depth: "standard", platform: "ChatGPT", topic: "Create a quiz about " },
   { id: "data-analysis", name: "Data Analysis", cat: "Data", icon: "📈", desc: "Analyze a dataset and extract insights", depth: "detailed", platform: "Claude", topic: "Analyze this data and provide insights: " },
   { id: "sql-builder", name: "SQL Query Builder", cat: "Data", icon: "🗃️", desc: "Generate SQL queries from plain English", depth: "standard", platform: "ChatGPT", topic: "Write a SQL query to " },
+  { id: "landing-page", name: "Landing Page", cat: "Build", icon: "🌐", desc: "Full landing page with hero, features, CTA sections", depth: "detailed", platform: "Claude", topic: "Build a landing page for " },
+  { id: "saas-app", name: "SaaS App Blueprint", cat: "Build", icon: "🚀", desc: "Full-stack SaaS architecture with auth, billing, and core features", depth: "detailed", platform: "Claude", topic: "Design and build a SaaS application for " },
+  { id: "mobile-app", name: "Mobile App Design", cat: "Build", icon: "📲", desc: "React Native or Flutter app with screens and navigation", depth: "detailed", platform: "Claude", topic: "Build a mobile app that " },
+  { id: "dashboard", name: "Admin Dashboard", cat: "Build", icon: "🖥️", desc: "Data-rich admin panel with charts, tables, and controls", depth: "detailed", platform: "Claude", topic: "Build an admin dashboard for " },
+  { id: "portfolio", name: "Portfolio Website", cat: "Build", icon: "✨", desc: "Personal or agency portfolio with projects and contact", depth: "standard", platform: "Claude", topic: "Build a portfolio website for " },
+  { id: "ecommerce", name: "E-Commerce Store", cat: "Build", icon: "🛒", desc: "Online store with product listings, cart, and checkout", depth: "detailed", platform: "Claude", topic: "Build an e-commerce store for " },
 ];
 
 // ═══════════════════════════════════════════════════════════════
@@ -500,7 +506,7 @@ export default function ObsidiaAI() {
                 <button key={level.id} onClick={() => pickDetail(level)}
                   onMouseEnter={() => setHoveredDetail(level.id)} onMouseLeave={() => setHoveredDetail(null)}
                   style={{ ...S.detailCard, borderColor: hoveredDetail === level.id ? "rgba(201,168,76,0.5)" : "rgba(255,255,255,0.05)", background: hoveredDetail === level.id ? "rgba(201,168,76,0.04)" : "rgba(255,255,255,0.015)", transform: hoveredDetail === level.id ? "translateY(-4px)" : "translateY(0)", boxShadow: hoveredDetail === level.id ? "0 12px 40px rgba(201,168,76,0.08)" : "none" }}>
-                  <div style={S.detailIcon}>{level.icon}</div>
+                  <div style={{ ...S.detailIcon, ...(level.iconColor ? { filter: "sepia(1) saturate(2) hue-rotate(5deg) brightness(0.95)" } : {}) }}>{level.icon}</div>
                   <div style={S.detailLabel}>{level.label}</div>
                   <div style={S.detailTagline}>{level.tagline}</div>
                   <div style={S.detailDesc}>{level.desc}</div>
