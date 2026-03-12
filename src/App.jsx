@@ -243,6 +243,22 @@ export default function ObsidiaAI() {
     }
   }, [detailLevel, targetAI]);
 
+  // ── Tab-to-complete placeholder ──
+  useEffect(() => {
+    const handleTab = (e) => {
+      if (e.key !== "Tab") return;
+      const el = e.target;
+      if ((el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") || !el.placeholder || el.value.trim()) return;
+      e.preventDefault();
+      const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+      setter.call(el, el.placeholder);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    document.addEventListener("keydown", handleTab);
+    return () => document.removeEventListener("keydown", handleTab);
+  }, []);
+
   // ── Auto-scroll ──
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
