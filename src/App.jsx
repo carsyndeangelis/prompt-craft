@@ -248,7 +248,7 @@ export default function ObsidiaAI() {
     const handleTab = (e) => {
       if (e.key !== "Tab") return;
       const el = e.target;
-      if ((el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") || !el.placeholder || el.value.trim()) return;
+      if ((el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") || !el.placeholder || el.value.trim() || el.dataset.tabcycle) return;
       e.preventDefault();
       const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(proto, "value").set;
@@ -601,7 +601,17 @@ export default function ObsidiaAI() {
                 })}
               </div>
               <div style={S.orDivider}><div style={S.orLine} /><span style={S.orText}>or type your own</span><div style={S.orLine} /></div>
-              <input ref={aiRef} type="text" value={targetAI} onChange={e => setTargetAI(e.target.value)} placeholder="Type an AI platform name..." style={S.input} onKeyDown={e => { if (e.key === "Enter") submitAI(); }} />
+              <input ref={aiRef} type="text" value={targetAI} onChange={e => setTargetAI(e.target.value)} placeholder="Type an AI platform name..." style={S.input} data-tabcycle="true"
+                onKeyDown={e => {
+                  if (e.key === "Tab") {
+                    e.preventDefault();
+                    const labels = AI_PLATFORMS.map(a => a.label);
+                    const idx = labels.indexOf(targetAI);
+                    setTargetAI(labels[(idx + 1) % labels.length]);
+                    return;
+                  }
+                  if (e.key === "Enter") submitAI();
+                }} />
               <div style={S.cardActions}>
                 <BtnBack onClick={() => { setStep(0); setDetailLevel(null); setTargetAI(""); }} />
                 <BtnPrimary onClick={submitAI} disabled={!targetAI.trim()} label="Next →" />
