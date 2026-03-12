@@ -1,172 +1,290 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
-async function callClaude(systemPrompt, userMessage) {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }],
-    }),
-  });
-  const data = await res.json();
-  return data.content?.map((b) => b.text || "").join("") || "";
+// ═══════════════════════════════════════════════════════════════
+// STORAGE — localStorage with graceful fallback
+// ═══════════════════════════════════════════════════════════════
+
+const Storage = {
+  get(key) {
+    try { return JSON.parse(localStorage.getItem(`pc_${key}`)); } catch { return null; }
+  },
+  set(key, val) {
+    try { localStorage.setItem(`pc_${key}`, JSON.stringify(val)); } catch {}
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// API — with retry logic and streaming
+// ═══════════════════════════════════════════════════════════════
+
+async function callClaude(systemPrompt, messages, maxTokens = 1000, retries = 3) {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ system: systemPrompt, messages, max_tokens: maxTokens }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        if (res.status === 429 && attempt < retries - 1) {
+          await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+          continue;
+        }
+        throw new Error(data.error);
+      }
+      return data.content?.map(b => b.text || "").join("") || "";
+    } catch (e) {
+      if (attempt === retries - 1) throw e;
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
 }
 
-// ── Detail levels ──
+async function streamClaude(systemPrompt, messages, maxTokens, onChunk, onDone) {
+  const res = await fetch("/api/stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ system: systemPrompt, messages, max_tokens: maxTokens }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Stream failed" }));
+    throw new Error(err.error || "Stream failed");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const raw = line.slice(6).trim();
+        if (!raw || raw === "[DONE]") continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+            fullText += parsed.delta.text;
+            onChunk(fullText);
+          }
+        } catch {}
+      }
+    }
+  }
+  onDone(fullText);
+  return fullText;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+
 const DETAIL_LEVELS = [
-  {
-    id: "instant",
-    label: "Instant",
-    tagline: "No questions asked",
-    desc: "Just tell us the topic and we'll generate a solid prompt immediately. No follow-up questions.",
-    icon: "⚡",
-    questionCount: 0,
-    promptLength: "2-4 sentences — a clean, effective prompt from your topic alone",
-  },
-  {
-    id: "standard",
-    label: "Standard",
-    tagline: "A well-rounded prompt",
-    desc: "Good balance of detail and speed. We'll ask 3 questions to dial things in.",
-    icon: "◈",
-    questionCount: 3,
-    promptLength: "4-6 sentences — clear with good context",
-  },
-  {
-    id: "detailed",
-    label: "Detailed",
-    tagline: "A comprehensive, expert-level prompt",
-    desc: "Maximum quality. We'll ask 5 questions to build a thorough, optimized prompt.",
-    icon: "✦",
-    questionCount: 5,
-    promptLength: "6-10 sentences — thorough with full context, constraints, and output formatting",
-  },
+  { id: "instant", label: "Instant", tagline: "No questions asked", desc: "Just tell us the topic and we'll generate a solid prompt immediately.", icon: "⚡", questionCount: 0, maxTokens: 1000 },
+  { id: "standard", label: "Standard", tagline: "A well-rounded prompt", desc: "Good balance of detail and speed. We'll ask 3 questions.", icon: "◈", questionCount: 3, maxTokens: 1500 },
+  { id: "detailed", label: "Detailed", tagline: "Comprehensive, expert-level", desc: "Maximum quality. We'll ask 5 questions to build a thorough prompt.", icon: "✦", questionCount: 5, maxTokens: 2500 },
 ];
 
-// ── Popular AI platforms ──
 const AI_PLATFORMS = [
-  { id: "chatgpt", label: "ChatGPT" },
-  { id: "claude", label: "Claude" },
-  { id: "gemini", label: "Gemini" },
-  { id: "copilot", label: "Copilot" },
-  { id: "perplexity", label: "Perplexity" },
-  { id: "midjourney", label: "Midjourney" },
-  { id: "grok", label: "Grok" },
-  { id: "meta", label: "Meta AI" },
+  { id: "chatgpt", label: "ChatGPT" }, { id: "claude", label: "Claude" },
+  { id: "gemini", label: "Gemini" }, { id: "copilot", label: "Copilot" },
+  { id: "perplexity", label: "Perplexity" }, { id: "midjourney", label: "Midjourney" },
+  { id: "grok", label: "Grok" }, { id: "meta", label: "Meta AI" },
 ];
 
-function getQuestionsSystem(detailLevel) {
-  const level = DETAIL_LEVELS.find((d) => d.id === detailLevel);
-  return `You are part of an AI prompt generator tool. The user has told you which AI they are writing a prompt for and what their topic/goal is.
+// ═══════════════════════════════════════════════════════════════
+// TEMPLATES
+// ═══════════════════════════════════════════════════════════════
+
+const TEMPLATE_CATEGORIES = ["All", "Writing", "Code", "Business", "Creative", "Education", "Data"];
+
+const TEMPLATES = [
+  { id: "blog", name: "Blog Post Writer", cat: "Writing", icon: "📝", desc: "Structured blog post with intro, body, and conclusion", depth: "standard", platform: "ChatGPT", topic: "Write a blog post about " },
+  { id: "email-campaign", name: "Email Campaign", cat: "Writing", icon: "📧", desc: "Persuasive marketing email sequence", depth: "detailed", platform: "ChatGPT", topic: "Create an email campaign for " },
+  { id: "social-media", name: "Social Media Calendar", cat: "Writing", icon: "📱", desc: "A week of platform-specific social posts", depth: "standard", platform: "ChatGPT", topic: "Create a social media content calendar for " },
+  { id: "cover-letter", name: "Cover Letter", cat: "Writing", icon: "💌", desc: "Tailored cover letter for a job application", depth: "standard", platform: "Claude", topic: "Write a cover letter for a position as " },
+  { id: "product-desc", name: "Product Description", cat: "Writing", icon: "🏷️", desc: "Compelling product copy for e-commerce", depth: "instant", platform: "ChatGPT", topic: "Write a product description for " },
+  { id: "code-review", name: "Code Review", cat: "Code", icon: "🔍", desc: "Thorough code review with suggestions", depth: "detailed", platform: "Claude", topic: "Review this code and suggest improvements: " },
+  { id: "debug", name: "Debug Helper", cat: "Code", icon: "🐛", desc: "Find and fix bugs in your code", depth: "standard", platform: "Claude", topic: "Help me debug this issue: " },
+  { id: "docs", name: "Documentation Generator", cat: "Code", icon: "📄", desc: "Generate docs from code or requirements", depth: "detailed", platform: "Claude", topic: "Write documentation for " },
+  { id: "api-design", name: "API Designer", cat: "Code", icon: "🔌", desc: "Design a REST or GraphQL API", depth: "detailed", platform: "Claude", topic: "Design an API for " },
+  { id: "swot", name: "SWOT Analysis", cat: "Business", icon: "📊", desc: "Comprehensive strengths/weaknesses/opportunities/threats", depth: "detailed", platform: "ChatGPT", topic: "Perform a SWOT analysis for " },
+  { id: "pitch", name: "Pitch Deck Outline", cat: "Business", icon: "🎯", desc: "Investor pitch deck structure and content", depth: "detailed", platform: "Claude", topic: "Create a pitch deck outline for " },
+  { id: "meeting", name: "Meeting Agenda", cat: "Business", icon: "📋", desc: "Structured meeting agenda with time allocations", depth: "instant", platform: "ChatGPT", topic: "Create a meeting agenda for " },
+  { id: "okr", name: "OKR Builder", cat: "Business", icon: "🎯", desc: "Draft objectives and key results", depth: "standard", platform: "Claude", topic: "Draft OKRs for " },
+  { id: "story", name: "Story Outline", cat: "Creative", icon: "📖", desc: "Plot structure, characters, and story beats", depth: "detailed", platform: "ChatGPT", topic: "Create a story outline about " },
+  { id: "brainstorm", name: "Brainstorming Session", cat: "Creative", icon: "💡", desc: "Generate creative ideas with structured exploration", depth: "standard", platform: "Claude", topic: "Brainstorm ideas for " },
+  { id: "character", name: "Character Builder", cat: "Creative", icon: "🧑‍🎨", desc: "Develop a detailed fictional character", depth: "detailed", platform: "ChatGPT", topic: "Create a character for " },
+  { id: "lesson", name: "Lesson Plan", cat: "Education", icon: "🎓", desc: "Structured lesson plan with objectives and activities", depth: "detailed", platform: "Claude", topic: "Create a lesson plan for teaching " },
+  { id: "study-guide", name: "Study Guide", cat: "Education", icon: "📚", desc: "Comprehensive study guide for any subject", depth: "standard", platform: "ChatGPT", topic: "Create a study guide for " },
+  { id: "quiz", name: "Quiz Generator", cat: "Education", icon: "❓", desc: "Generate quiz questions with answer key", depth: "standard", platform: "ChatGPT", topic: "Create a quiz about " },
+  { id: "data-analysis", name: "Data Analysis", cat: "Data", icon: "📈", desc: "Analyze a dataset and extract insights", depth: "detailed", platform: "Claude", topic: "Analyze this data and provide insights: " },
+  { id: "sql-builder", name: "SQL Query Builder", cat: "Data", icon: "🗃️", desc: "Generate SQL queries from plain English", depth: "standard", platform: "ChatGPT", topic: "Write a SQL query to " },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// SYSTEM PROMPTS
+// ═══════════════════════════════════════════════════════════════
+
+function getQuestionsSystem(detail) {
+  const d = DETAIL_LEVELS.find(l => l.id === detail);
+  return `You are part of an AI prompt generator tool. The user told you which AI they're writing for and their topic.
 
 RULES:
 - Return ONLY valid JSON — no markdown, no backticks, no explanation
 - Format: { "questions": [ { "id": "q1", "question": "...", "placeholder": "..." }, ... ] }
-- Ask exactly ${level.questionCount} questions
-- ${detailLevel === "standard"
-    ? "Ask about the goal, audience/context, and format preferences"
-    : "Ask thorough questions covering goal, audience, format, tone, constraints, and any specific requirements"
-  }
-- Tailor questions to the specific AI platform they mentioned
-- Make questions specific to their topic — not generic
-- Keep questions short and conversational
-- Placeholders should be helpful example answers`;
+- Ask exactly ${d.questionCount} questions
+- ${detail === "standard" ? "Ask about the goal, audience/context, and format" : "Cover goal, audience, format, tone, constraints, and specifics"}
+- Tailor to the AI platform and topic
+- Keep questions conversational
+- Placeholders should be helpful examples`;
 }
 
-function getPromptSystem(detailLevel) {
-  const level = DETAIL_LEVELS.find((d) => d.id === detailLevel);
-  return `You are an expert AI prompt engineer. Given the target AI platform, the user's topic, and ${
-    detailLevel === "instant" ? "no additional context" : "their answers to follow-up questions"
-  }, create a highly effective prompt they can paste directly into that AI.
+function getPromptSystem(detail) {
+  const d = DETAIL_LEVELS.find(l => l.id === detail);
+  return `You are an expert AI prompt engineer. Build a prompt optimized for the target AI platform.
 
 RULES:
 - Return ONLY the prompt text — no explanations, no labels, no markdown formatting
-- Optimize specifically for the target AI platform
-- The user requested a "${level.label}" level prompt, so make it ${level.promptLength}
-${
-  detailLevel === "instant"
-    ? "- You only have the topic to work with — no follow-up answers\n- Write a clean, effective prompt using just the topic\n- Infer reasonable defaults for audience, tone, and format\n- Keep it concise but specific enough to get good results"
-    : detailLevel === "standard"
-    ? "- Include a clear role/persona, the main task, key context from answers, and basic format guidance\n- Be specific but not overly long"
-    : "- Include a detailed role/persona, comprehensive task description, all context from answers, specific constraints, tone/style guidance, and detailed output format instructions\n- Be thorough and leave no ambiguity"
-}
-- Write it directed at the AI (e.g. "You are..." or "Act as..." or "Write a...")
-- Never include meta-commentary — just the prompt itself`;
+- Optimize for the target AI platform's strengths
+- ${detail === "instant"
+    ? "You only have the topic — infer reasonable defaults. Write 2-4 clear sentences."
+    : detail === "standard"
+    ? "Include a role/persona, task, key context, and format guidance. 4-6 sentences."
+    : "Include detailed role/persona, comprehensive task, all context, constraints, tone, and output format. 6-10 sentences."}
+- Write directed at the AI (e.g. "You are..." or "Act as...")
+- Never include meta-commentary`;
 }
 
+const REFINE_SYSTEM = `You are helping refine an AI prompt. The user will share the current prompt and request specific changes. Apply ONLY the requested changes while keeping everything else intact. Return ONLY the updated prompt text — no explanations, no labels, no markdown formatting. Never say things like "Here's the updated prompt" — just return the prompt itself.`;
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORT HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function exportAsMarkdown(prompt, targetAI, detail, topic) {
+  return `# Prompt Craft — Generated Prompt\n\n**Platform:** ${targetAI}  \n**Detail Level:** ${detail}  \n**Topic:** ${topic}  \n**Generated:** ${new Date().toLocaleDateString()}\n\n---\n\n\`\`\`\n${prompt}\n\`\`\`\n`;
+}
+
+function downloadFile(content, filename) {
+  const blob = new Blob([content], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════
+
 export default function PromptCraft() {
+  // Steps: 0=depth, 1=platform, 2=topic, 3=loading-q, 4=questions, 5=generating, 6=result
   const [step, setStep] = useState(0);
-  // 0=detail, 1=AI platform, 2=topic, 3=loading-q, 4=questions, 5=loading-p, 6=result
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templateCat, setTemplateCat] = useState("All");
   const [detailLevel, setDetailLevel] = useState(null);
   const [targetAI, setTargetAI] = useState("");
   const [topic, setTopic] = useState("");
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState({});
   const [generatedPrompt, setGeneratedPrompt] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedMd, setCopiedMd] = useState(false);
   const [error, setError] = useState("");
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [hoveredDetail, setHoveredDetail] = useState(null);
   const [hoveredAI, setHoveredAI] = useState(null);
+
+  // Refinement state
+  const [refineInput, setRefineInput] = useState("");
+  const [refineHistory, setRefineHistory] = useState([]); // [{role, content}]
+  const [isRefining, setIsRefining] = useState(false);
+  const [promptVersions, setPromptVersions] = useState([]); // all versions of the prompt
+
   const bottomRef = useRef(null);
   const topicRef = useRef(null);
   const aiRef = useRef(null);
+  const refineRef = useRef(null);
 
+  // ── Load from storage on mount ──
+  useEffect(() => {
+    const saved = Storage.get("history");
+    if (saved?.length) setHistory(saved.map(h => ({ ...h, time: new Date(h.time) })));
+    const prefs = Storage.get("prefs");
+    if (prefs?.lastDepth) {
+      const d = DETAIL_LEVELS.find(l => l.id === prefs.lastDepth);
+      if (d) setDetailLevel(d);
+    }
+    if (prefs?.lastPlatform) setTargetAI(prefs.lastPlatform);
+  }, []);
+
+  // ── Save history to storage ──
+  useEffect(() => {
+    if (history.length) Storage.set("history", history);
+  }, [history]);
+
+  // ── Save prefs ──
+  useEffect(() => {
+    if (detailLevel || targetAI) {
+      Storage.set("prefs", { lastDepth: detailLevel?.id, lastPlatform: targetAI });
+    }
+  }, [detailLevel, targetAI]);
+
+  // ── Auto-scroll ──
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [step, questions, generatedPrompt, showHistory]);
+  }, [step, questions, generatedPrompt, showHistory, refineHistory, showTemplates]);
 
   useEffect(() => {
     if (step === 1) setTimeout(() => aiRef.current?.focus(), 300);
     if (step === 2) setTimeout(() => topicRef.current?.focus(), 200);
   }, [step]);
 
-  const pickDetail = (level) => {
-    setDetailLevel(level);
-    setStep(1);
-  };
+  // ── Get max tokens for current detail level ──
+  const getMaxTokens = () => detailLevel?.maxTokens || 1000;
+  const isInstant = detailLevel?.id === "instant";
 
-  const selectAIPlatform = (name) => {
-    setTargetAI(name);
-  };
+  // ── Handlers ──
 
-  const submitAI = () => {
-    if (!targetAI.trim()) return;
+  const pickDetail = (level) => { setDetailLevel(level); setStep(1); };
+
+  const useTemplate = (t) => {
+    const d = DETAIL_LEVELS.find(l => l.id === t.depth);
+    setDetailLevel(d);
+    setTargetAI(t.platform);
+    setTopic(t.topic);
+    setShowTemplates(false);
     setStep(2);
   };
 
+  const submitAI = () => { if (targetAI.trim()) setStep(2); };
+
   const submitTopic = async () => {
     if (!topic.trim()) return;
-    // If instant — skip questions entirely and go straight to prompt generation
-    if (detailLevel.id === "instant") {
-      setStep(5);
-      setError("");
-      try {
-        const prompt = await callClaude(
-          getPromptSystem(detailLevel.id),
-          `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: Instant (no follow-up questions — generate from topic alone)`
-        );
-        setGeneratedPrompt(prompt.trim());
-        setHistory((prev) =>
-          [{ prompt: prompt.trim(), topic, targetAI, detail: detailLevel.label, time: new Date() }, ...prev].slice(0, 20)
-        );
-        setStep(6);
-      } catch (e) {
-        console.error(e);
-        setError("Something went wrong. Please try again.");
-        setStep(2);
-      }
+    if (isInstant) {
+      generatePrompt();
       return;
     }
-    // Otherwise ask questions
     setStep(3);
     setError("");
     try {
       const raw = await callClaude(
         getQuestionsSystem(detailLevel.id),
-        `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}`
+        [{ role: "user", content: `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}` }],
+        1000
       );
       const cleaned = raw.replace(/```json|```/g, "").trim();
       const parsed = JSON.parse(cleaned);
@@ -176,144 +294,184 @@ export default function PromptCraft() {
         setStep(4);
       } else throw new Error("No questions");
     } catch (e) {
-      console.error(e);
-      setError("Something went wrong generating questions. Please try again.");
+      setError(e.message || "Failed to generate questions. Please try again.");
       setStep(2);
     }
   };
 
-  const submitAnswers = async () => {
+  const generatePrompt = async (fromAnswers = false) => {
     setStep(5);
     setError("");
+    setGeneratedPrompt("");
+    setIsStreaming(true);
+    setRefineHistory([]);
+    setRefineInput("");
+    setPromptVersions([]);
+
+    let userContent = `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}`;
+    if (fromAnswers && questions.length) {
+      const qaPairs = questions.map(q => `Q: ${q.question}\nA: ${answers[q.id] || "(skipped)"}`).join("\n\n");
+      userContent += `\n\nFollow-up Q&A:\n${qaPairs}`;
+    }
+
     try {
-      const qaPairs = questions
-        .map((q) => `Q: ${q.question}\nA: ${answers[q.id] || "(skipped)"}`)
-        .join("\n\n");
-      const prompt = await callClaude(
-        getPromptSystem(detailLevel.id),
-        `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}\n\nFollow-up Q&A:\n${qaPairs}`
-      );
-      setGeneratedPrompt(prompt.trim());
-      setHistory((prev) =>
-        [{ prompt: prompt.trim(), topic, targetAI, detail: detailLevel.label, time: new Date() }, ...prev].slice(0, 20)
-      );
       setStep(6);
+      await streamClaude(
+        getPromptSystem(detailLevel.id),
+        [{ role: "user", content: userContent }],
+        getMaxTokens(),
+        (partial) => setGeneratedPrompt(partial),
+        (final) => {
+          setIsStreaming(false);
+          setPromptVersions([final.trim()]);
+          const entry = { prompt: final.trim(), topic, targetAI, detail: detailLevel.label, time: new Date() };
+          setHistory(prev => [entry, ...prev].slice(0, 30));
+        }
+      );
     } catch (e) {
-      console.error(e);
-      setError("Something went wrong building your prompt. Please try again.");
-      setStep(4);
+      setIsStreaming(false);
+      setError(e.message || "Failed to generate prompt. Please try again.");
+      setStep(fromAnswers ? 4 : 2);
     }
   };
 
+  const submitAnswers = () => generatePrompt(true);
+
+  // ── Refinement ──
+  const submitRefinement = async () => {
+    if (!refineInput.trim() || isRefining) return;
+    const instruction = refineInput.trim();
+    setRefineInput("");
+    setIsRefining(true);
+    setError("");
+
+    const newHistory = [
+      ...refineHistory,
+      { role: "user", content: `Current prompt:\n"${generatedPrompt}"\n\nRequested change: ${instruction}` },
+    ];
+    // Only send last few turns to stay within token limits
+    const recentMessages = newHistory.slice(-6);
+
+    try {
+      setIsStreaming(true);
+      let finalText = "";
+      await streamClaude(
+        REFINE_SYSTEM,
+        recentMessages,
+        getMaxTokens(),
+        (partial) => setGeneratedPrompt(partial),
+        (final) => {
+          finalText = final.trim();
+          setIsStreaming(false);
+          setPromptVersions(prev => [...prev, finalText]);
+          setRefineHistory([...newHistory, { role: "assistant", content: finalText }]);
+          // Update history
+          setHistory(prev => {
+            const updated = [...prev];
+            if (updated[0]) updated[0] = { ...updated[0], prompt: finalText };
+            return updated;
+          });
+        }
+      );
+    } catch (e) {
+      setIsStreaming(false);
+      setError(e.message || "Refinement failed. Please try again.");
+    }
+    setIsRefining(false);
+  };
+
+  const revertToVersion = (idx) => {
+    setGeneratedPrompt(promptVersions[idx]);
+  };
+
+  // ── Regenerate ──
   const regenerate = async () => {
     setStep(5);
+    setIsStreaming(true);
+    setGeneratedPrompt("");
+    setRefineHistory([]);
+    setRefineInput("");
+    setError("");
+
+    let userContent = `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}`;
+    if (questions.length) {
+      const qaPairs = questions.map(q => `Q: ${q.question}\nA: ${answers[q.id] || "(skipped)"}`).join("\n\n");
+      userContent += `\n\nFollow-up Q&A:\n${qaPairs}`;
+    }
+    userContent += `\n\nGenerate a DIFFERENT variation.`;
+
     try {
-      const qaPairs = questions.length > 0
-        ? questions.map((q) => `Q: ${q.question}\nA: ${answers[q.id] || "(skipped)"}`).join("\n\n")
-        : "(no follow-up questions — instant mode)";
-      const prompt = await callClaude(
+      setStep(6);
+      await streamClaude(
         getPromptSystem(detailLevel.id),
-        `Target AI: ${targetAI}\nTopic: ${topic}\nDetail level: ${detailLevel.label}\n\nFollow-up Q&A:\n${qaPairs}\n\nGenerate a DIFFERENT variation than: "${generatedPrompt.slice(0, 200)}"`
+        [{ role: "user", content: userContent }],
+        getMaxTokens(),
+        (partial) => setGeneratedPrompt(partial),
+        (final) => {
+          setIsStreaming(false);
+          setPromptVersions([final.trim()]);
+          const entry = { prompt: final.trim(), topic, targetAI, detail: detailLevel.label, time: new Date() };
+          setHistory(prev => [entry, ...prev].slice(0, 30));
+        }
       );
-      setGeneratedPrompt(prompt.trim());
-      setHistory((prev) =>
-        [{ prompt: prompt.trim(), topic, targetAI, detail: detailLevel.label, time: new Date() }, ...prev].slice(0, 20)
-      );
-      setStep(6);
     } catch (e) {
-      setError("Failed to regenerate.");
-      setStep(6);
+      setIsStreaming(false);
+      setError(e.message || "Regeneration failed.");
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(generatedPrompt);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+  // ── Export ──
+  const handleCopy = () => { navigator.clipboard.writeText(generatedPrompt); setCopied(true); setTimeout(() => setCopied(false), 2500); };
+  const handleCopyMarkdown = () => {
+    navigator.clipboard.writeText(exportAsMarkdown(generatedPrompt, targetAI, detailLevel?.label, topic));
+    setCopiedMd(true); setTimeout(() => setCopiedMd(false), 2500);
+  };
+  const handleDownload = () => {
+    downloadFile(generatedPrompt, `prompt-craft-${Date.now()}.txt`);
   };
 
   const startOver = () => {
-    setStep(0);
-    setDetailLevel(null);
-    setTargetAI("");
-    setTopic("");
-    setQuestions([]);
-    setAnswers({});
-    setGeneratedPrompt("");
-    setCopied(false);
-    setError("");
+    setStep(0); setDetailLevel(null); setTargetAI(""); setTopic(""); setQuestions([]); setAnswers({});
+    setGeneratedPrompt(""); setCopied(false); setError(""); setRefineHistory([]); setRefineInput("");
+    setPromptVersions([]); setIsStreaming(false); setShowTemplates(false);
   };
 
-  const answeredCount = questions.filter((q) => answers[q.id]?.trim()).length;
+  const answeredCount = questions.filter(q => answers[q.id]?.trim()).length;
 
-  // Progress labels adapt based on whether questions step exists
-  const isInstant = detailLevel?.id === "instant";
-  const progressSteps = isInstant
-    ? ["Depth", "AI Platform", "Topic", "Prompt"]
-    : ["Depth", "AI Platform", "Topic", "Questions", "Prompt"];
-
+  // ── Progress ──
+  const progressSteps = isInstant ? ["Depth", "AI", "Topic", "Prompt"] : ["Depth", "AI", "Topic", "Questions", "Prompt"];
   const getProgressWidth = () => {
-    if (isInstant) {
-      if (step === 0) return "0%";
-      if (step === 1) return "33%";
-      if (step === 2) return "66%";
-      return "100%";
-    }
-    if (step === 0) return "0%";
-    if (step === 1) return "25%";
-    if (step === 2) return "50%";
-    if (step <= 4) return "75%";
-    return "100%";
+    if (isInstant) return step === 0 ? "0%" : step === 1 ? "33%" : step === 2 ? "66%" : "100%";
+    return step === 0 ? "0%" : step === 1 ? "25%" : step === 2 ? "50%" : step <= 4 ? "75%" : "100%";
   };
-
   const isStepActive = (i) => {
-    if (isInstant) {
-      const map = [0, 1, 2, 6];
-      return step >= map[i];
-    }
-    const map = [0, 1, 2, 4, 6];
+    const map = isInstant ? [0, 1, 2, 6] : [0, 1, 2, 4, 6];
     return step >= map[i];
   };
+
+  // ═══════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════
 
   return (
     <div style={S.page}>
       <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Cormorant+Garamond:wght@600;700&display=swap" rel="stylesheet" />
-
-      <div style={S.glowTop} />
-      <div style={S.glowBot} />
-      <div style={S.grain} />
+      <div style={S.glowTop} /><div style={S.glowBot} /><div style={S.grain} />
 
       <div style={S.container}>
-        {/* ── Header ── */}
+        {/* Header */}
         <header style={S.header}>
-          <div style={S.logoBadge}>
-            <span style={S.logoIcon}>✦</span> Prompt Craft
-          </div>
-          <h1 style={S.title}>
-            Craft Your <span style={S.goldText}>Perfect Prompt</span>
-          </h1>
-          <p style={S.subtitle}>
-            Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.
-          </p>
-          <div style={S.divider}>
-            <div style={S.dividerLine} />
-            <span style={S.dividerDot}>◈</span>
-            <div style={S.dividerLine} />
-          </div>
+          <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Prompt Craft</div>
+          <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span></h1>
+          <p style={S.subtitle}>Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.</p>
+          <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
         </header>
 
-        {/* ── Progress ── */}
+        {/* Progress */}
         <div style={S.progressWrap}>
-          <div style={S.progressTrack}>
-            <div style={{ ...S.progressFill, width: getProgressWidth() }} />
-          </div>
+          <div style={S.progressTrack}><div style={{ ...S.progressFill, width: getProgressWidth() }} /></div>
           <div style={S.progressLabels}>
-            {progressSteps.map((label, i) => (
-              <span key={i} style={{
-                ...S.progressLabel,
-                color: isStepActive(i) ? "#c9a84c" : "#3a3632",
-              }}>{label}</span>
-            ))}
+            {progressSteps.map((l, i) => <span key={i} style={{ ...S.progressLabel, color: isStepActive(i) ? "#c9a84c" : "#3a3632" }}>{l}</span>)}
           </div>
         </div>
 
@@ -322,35 +480,51 @@ export default function PromptCraft() {
           <Fade>
             <SH title="How detailed of a prompt do you need?" desc="This determines how many questions we'll ask and how thorough the final prompt will be." />
             <div style={S.detailGrid}>
-              {DETAIL_LEVELS.map((level) => {
-                const isHovered = hoveredDetail === level.id;
-                return (
-                  <button
-                    key={level.id}
-                    onClick={() => pickDetail(level)}
-                    onMouseEnter={() => setHoveredDetail(level.id)}
-                    onMouseLeave={() => setHoveredDetail(null)}
-                    style={{
-                      ...S.detailCard,
-                      borderColor: isHovered ? "rgba(201,168,76,0.5)" : "rgba(255,255,255,0.05)",
-                      background: isHovered ? "rgba(201,168,76,0.04)" : "rgba(255,255,255,0.015)",
-                      transform: isHovered ? "translateY(-4px)" : "translateY(0)",
-                      boxShadow: isHovered ? "0 12px 40px rgba(201,168,76,0.08)" : "none",
-                    }}
-                  >
-                    <div style={S.detailIcon}>{level.icon}</div>
-                    <div style={S.detailLabel}>{level.label}</div>
-                    <div style={S.detailTagline}>{level.tagline}</div>
-                    <div style={S.detailDesc}>{level.desc}</div>
-                    <div style={S.detailFooter}>
-                      <span style={S.detailQuestions}>
-                        {level.questionCount === 0 ? "No questions" : `${level.questionCount} questions`}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
+              {DETAIL_LEVELS.map(level => (
+                <button key={level.id} onClick={() => pickDetail(level)}
+                  onMouseEnter={() => setHoveredDetail(level.id)} onMouseLeave={() => setHoveredDetail(null)}
+                  style={{ ...S.detailCard, borderColor: hoveredDetail === level.id ? "rgba(201,168,76,0.5)" : "rgba(255,255,255,0.05)", background: hoveredDetail === level.id ? "rgba(201,168,76,0.04)" : "rgba(255,255,255,0.015)", transform: hoveredDetail === level.id ? "translateY(-4px)" : "translateY(0)", boxShadow: hoveredDetail === level.id ? "0 12px 40px rgba(201,168,76,0.08)" : "none" }}>
+                  <div style={S.detailIcon}>{level.icon}</div>
+                  <div style={S.detailLabel}>{level.label}</div>
+                  <div style={S.detailTagline}>{level.tagline}</div>
+                  <div style={S.detailDesc}>{level.desc}</div>
+                  <span style={S.detailBadge}>{level.questionCount === 0 ? "No questions" : `${level.questionCount} questions`}</span>
+                </button>
+              ))}
             </div>
+
+            {/* Template toggle */}
+            <div style={{ marginTop: "28px", textAlign: "center" }}>
+              <button onClick={() => setShowTemplates(!showTemplates)} className="btn-secondary" style={{ ...S.secBtn, display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                {showTemplates ? "Hide templates" : "📋 Or start from a template"}
+              </button>
+            </div>
+
+            {/* Template browser */}
+            {showTemplates && (
+              <Fade>
+                <div style={{ marginTop: "24px" }}>
+                  <div style={S.templateCatBar}>
+                    {TEMPLATE_CATEGORIES.map(c => (
+                      <button key={c} onClick={() => setTemplateCat(c)} style={{ ...S.templateCatBtn, color: templateCat === c ? "#c9a84c" : "#6d675e", borderColor: templateCat === c ? "rgba(201,168,76,0.3)" : "transparent", background: templateCat === c ? "rgba(201,168,76,0.06)" : "transparent" }}>{c}</button>
+                    ))}
+                  </div>
+                  <div style={S.templateGrid}>
+                    {TEMPLATES.filter(t => templateCat === "All" || t.cat === templateCat).map(t => (
+                      <button key={t.id} onClick={() => useTemplate(t)} className="template-card" style={S.templateCard}>
+                        <span style={{ fontSize: "20px" }}>{t.icon}</span>
+                        <div style={{ fontSize: "14px", fontWeight: 600, color: "#e8e4db" }}>{t.name}</div>
+                        <div style={{ fontSize: "12px", color: "#6d675e", lineHeight: 1.4 }}>{t.desc}</div>
+                        <div style={{ display: "flex", gap: "6px", marginTop: "auto" }}>
+                          <span style={S.tinyTag}>{t.platform}</span>
+                          <span style={S.tinyTag}>{t.depth}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </Fade>
+            )}
           </Fade>
         )}
 
@@ -359,58 +533,20 @@ export default function PromptCraft() {
           <Fade>
             <SH title="What AI will you be generating this prompt for?" desc="Select one below or type your own." />
             <div style={S.card}>
-              {/* Selectable chips */}
               <div style={S.aiChipsWrap}>
-                {AI_PLATFORMS.map((ai) => {
-                  const isSelected = targetAI === ai.label;
-                  const isHov = hoveredAI === ai.id;
+                {AI_PLATFORMS.map(ai => {
+                  const sel = targetAI === ai.label;
+                  const hov = hoveredAI === ai.id;
                   return (
-                    <button
-                      key={ai.id}
-                      onClick={() => selectAIPlatform(ai.label)}
-                      onMouseEnter={() => setHoveredAI(ai.id)}
-                      onMouseLeave={() => setHoveredAI(null)}
-                      style={{
-                        ...S.aiChip,
-                        borderColor: isSelected
-                          ? "rgba(201,168,76,0.5)"
-                          : isHov
-                          ? "rgba(201,168,76,0.25)"
-                          : "rgba(255,255,255,0.06)",
-                        background: isSelected
-                          ? "rgba(201,168,76,0.1)"
-                          : isHov
-                          ? "rgba(201,168,76,0.03)"
-                          : "rgba(255,255,255,0.02)",
-                        color: isSelected ? "#c9a84c" : isHov ? "#b0aa9f" : "#7a756c",
-                        transform: isHov && !isSelected ? "translateY(-1px)" : "translateY(0)",
-                      }}
-                    >
-                      {ai.label}
-                      {isSelected && <span style={{ marginLeft: "6px", fontSize: "11px" }}>✓</span>}
+                    <button key={ai.id} onClick={() => setTargetAI(ai.label)} onMouseEnter={() => setHoveredAI(ai.id)} onMouseLeave={() => setHoveredAI(null)}
+                      style={{ ...S.aiChip, borderColor: sel ? "rgba(201,168,76,0.5)" : hov ? "rgba(201,168,76,0.25)" : "rgba(255,255,255,0.06)", background: sel ? "rgba(201,168,76,0.1)" : hov ? "rgba(201,168,76,0.03)" : "rgba(255,255,255,0.02)", color: sel ? "#c9a84c" : hov ? "#b0aa9f" : "#7a756c", transform: hov && !sel ? "translateY(-1px)" : "translateY(0)" }}>
+                      {ai.label}{sel && <span style={{ marginLeft: "6px", fontSize: "11px" }}>✓</span>}
                     </button>
                   );
                 })}
               </div>
-
-              {/* Divider */}
-              <div style={S.orDivider}>
-                <div style={S.orLine} />
-                <span style={S.orText}>or type your own</span>
-                <div style={S.orLine} />
-              </div>
-
-              {/* Text input */}
-              <input
-                ref={aiRef}
-                type="text"
-                value={targetAI}
-                onChange={(e) => setTargetAI(e.target.value)}
-                placeholder="Type an AI platform name..."
-                style={S.input}
-                onKeyDown={(e) => { if (e.key === "Enter") submitAI(); }}
-              />
-
+              <div style={S.orDivider}><div style={S.orLine} /><span style={S.orText}>or type your own</span><div style={S.orLine} /></div>
+              <input ref={aiRef} type="text" value={targetAI} onChange={e => setTargetAI(e.target.value)} placeholder="Type an AI platform name..." style={S.input} onKeyDown={e => { if (e.key === "Enter") submitAI(); }} />
               <div style={S.cardActions}>
                 <BtnBack onClick={() => { setStep(0); setDetailLevel(null); setTargetAI(""); }} />
                 <BtnPrimary onClick={submitAI} disabled={!targetAI.trim()} label="Next →" />
@@ -422,31 +558,16 @@ export default function PromptCraft() {
         {/* ═══ Step 2: Topic ═══ */}
         {step === 2 && (
           <Fade>
-            <SH
-              title={`What do you need ${targetAI} to do?`}
-              desc={isInstant
-                ? "Describe your topic or goal. Since you chose Instant, we'll generate your prompt right away — no extra questions."
-                : "Describe your topic or goal. Be as specific or broad as you'd like."
-              }
-            />
+            <SH title={`What do you need ${targetAI} to do?`} desc={isInstant ? "Describe your topic — we'll generate your prompt instantly." : "Describe your topic or goal."} />
             <div style={S.card}>
               <label style={S.inputLabel}>Your topic or goal</label>
-              <textarea
-                ref={topicRef}
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder={'e.g. "Write a blog post about how remote work changes company culture" or "Help me plan a 30-day fitness program for beginners"'}
-                style={S.textarea}
-                rows={4}
-                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTopic(); } }}
-              />
+              <textarea ref={topicRef} value={topic} onChange={e => setTopic(e.target.value)}
+                placeholder='e.g. "Write a blog post about remote work culture" or "Help me build a 30-day fitness plan"'
+                style={S.textarea} rows={4}
+                onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitTopic(); } }} />
               <div style={S.cardActions}>
                 <BtnBack onClick={() => { setStep(1); setTopic(""); }} />
-                <BtnPrimary
-                  onClick={submitTopic}
-                  disabled={!topic.trim()}
-                  label={isInstant ? "Generate prompt →" : "Next — Ask me questions →"}
-                />
+                <BtnPrimary onClick={submitTopic} disabled={!topic.trim()} label={isInstant ? "Generate prompt →" : "Next — Ask me questions →"} />
               </div>
             </div>
           </Fade>
@@ -454,22 +575,13 @@ export default function PromptCraft() {
 
         {/* ═══ Step 3: Loading questions ═══ */}
         {step === 3 && (
-          <Fade>
-            <div style={S.loadBox}>
-              <GoldSpinner />
-              <p style={S.loadTitle}>Preparing your questions...</p>
-              <p style={S.loadSub}>Crafting {detailLevel?.questionCount} personalized questions for your {targetAI} prompt</p>
-            </div>
-          </Fade>
+          <Fade><div style={S.loadBox}><GoldSpinner /><p style={S.loadTitle}>Preparing your questions...</p><p style={S.loadSub}>Crafting {detailLevel?.questionCount} personalized questions for your {targetAI} prompt</p></div></Fade>
         )}
 
         {/* ═══ Step 4: Questions ═══ */}
         {step === 4 && (
           <Fade>
-            <SH
-              title={detailLevel?.id === "standard" ? "A few questions to fine-tune" : "Let's get the details right"}
-              desc={`Your answers help us build a ${detailLevel?.label.toLowerCase()}-level prompt for ${targetAI}. Answer as many as you'd like.`}
-            />
+            <SH title={detailLevel?.id === "standard" ? "A few questions to fine-tune" : "Let's get the details right"} desc={`Your answers help build a better prompt for ${targetAI}.`} />
             {error && <div style={S.errorBox}>{error}</div>}
             <div style={S.questionsWrap}>
               {questions.map((q, i) => (
@@ -477,35 +589,21 @@ export default function PromptCraft() {
                   <div style={S.qNum}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
                     <label style={S.qLabel}>{q.question}</label>
-                    <textarea
-                      value={answers[q.id] || ""}
-                      onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                      placeholder={q.placeholder}
-                      style={S.qInput}
-                      rows={2}
-                    />
+                    <textarea value={answers[q.id] || ""} onChange={e => setAnswers(a => ({ ...a, [q.id]: e.target.value }))} placeholder={q.placeholder} style={S.qInput} rows={2} />
                   </div>
                 </div>
               ))}
             </div>
             <div style={S.cardActions}>
               <BtnBack onClick={() => { setStep(2); setQuestions([]); }} />
-              <BtnPrimary onClick={submitAnswers} disabled={answeredCount === 0} label={
-                <>Build my prompt{answeredCount > 0 && <span style={S.aBadge}>{answeredCount}/{questions.length}</span>}</>
-              } />
+              <BtnPrimary onClick={submitAnswers} disabled={answeredCount === 0} label={<>Build my prompt{answeredCount > 0 && <span style={S.aBadge}>{answeredCount}/{questions.length}</span>}</>} />
             </div>
           </Fade>
         )}
 
-        {/* ═══ Step 5: Loading prompt ═══ */}
+        {/* ═══ Step 5: Generating (shown briefly before streaming kicks in) ═══ */}
         {step === 5 && (
-          <Fade>
-            <div style={S.loadBox}>
-              <GoldSpinner />
-              <p style={S.loadTitle}>Crafting your prompt...</p>
-              <p style={S.loadSub}>Building a {detailLevel?.label.toLowerCase()}-level prompt optimized for {targetAI}</p>
-            </div>
-          </Fade>
+          <Fade><div style={S.loadBox}><GoldSpinner /><p style={S.loadTitle}>Crafting your prompt...</p><p style={S.loadSub}>Building a {detailLevel?.label.toLowerCase()}-level prompt for {targetAI}</p></div></Fade>
         )}
 
         {/* ═══ Step 6: Result ═══ */}
@@ -513,43 +611,98 @@ export default function PromptCraft() {
           <Fade>
             <div style={{ textAlign: "center", marginBottom: "28px" }}>
               <div style={S.resultBadge}>✦ Your {targetAI} Prompt</div>
-              <p style={S.resultSub}>
-                {detailLevel?.label} prompt ready — copy and paste directly into {targetAI}.
-              </p>
+              <p style={S.resultSub}>{isStreaming ? "Generating..." : `${detailLevel?.label} prompt ready — copy and paste into ${targetAI}.`}</p>
             </div>
             {error && <div style={S.errorBox}>{error}</div>}
 
-            <div style={S.resultCard}>
+            {/* Result card */}
+            <div style={{ ...S.resultCard, animation: isStreaming ? "none" : "goldPulse 3s ease infinite" }}>
               <div style={S.resultHeader}>
                 <div style={S.resultMeta}>
-                  <span style={S.resultMetaTag}>{targetAI}</span>
-                  <span style={S.resultMetaDot}>·</span>
-                  <span style={S.resultMetaTag}>{detailLevel?.label}</span>
+                  <span style={S.metaTag}>{targetAI}</span>
+                  <span style={{ color: "#3a3632", fontSize: "10px" }}>·</span>
+                  <span style={S.metaTag}>{detailLevel?.label}</span>
                 </div>
-                <BtnCopy onClick={handleCopy} copied={copied} />
+                {!isStreaming && <BtnCopy onClick={handleCopy} copied={copied} />}
               </div>
-              <p style={S.resultText}>{generatedPrompt}</p>
+              <p style={{ ...S.resultText, opacity: isStreaming ? 0.8 : 1 }}>
+                {generatedPrompt || " "}
+                {isStreaming && <span style={S.cursor}>|</span>}
+              </p>
             </div>
 
-            <div style={S.resultActions}>
-              <BtnSecondary onClick={startOver} label="✦ New prompt" />
-              {!isInstant && (
-                <BtnSecondary onClick={() => { setStep(4); setGeneratedPrompt(""); }} label="↻ Edit answers" />
-              )}
-              <BtnPrimary onClick={regenerate} label="⟳ Different version" />
-            </div>
+            {/* Export & action buttons */}
+            {!isStreaming && (
+              <Fade>
+                <div style={S.exportBar}>
+                  <button className="btn-secondary" onClick={handleCopy} style={S.exportBtn}>{copied ? "✓ Copied" : "📋 Copy"}</button>
+                  <button className="btn-secondary" onClick={handleCopyMarkdown} style={S.exportBtn}>{copiedMd ? "✓ Copied" : "📝 Copy as Markdown"}</button>
+                  <button className="btn-secondary" onClick={handleDownload} style={S.exportBtn}>💾 Download .txt</button>
+                </div>
 
-            <div style={S.tipsCard}>
-              <div style={S.tipsHeader}>Tips for best results</div>
-              <div style={S.tipsList}>
-                <span style={S.tipItem}>Paste this at the <strong>start</strong> of a new chat in {targetAI}</span>
-                <span style={S.tipItem}>If the response isn't right, reply with <strong>"adjust the tone"</strong> or <strong>"make it shorter"</strong></span>
-                <span style={S.tipItem}>Hit <strong>Different version</strong> above to get an alternate prompt for the same topic</span>
-                {isInstant && (
-                  <span style={S.tipItem}>Want a more detailed prompt? Try <strong>Standard</strong> or <strong>Detailed</strong> depth next time</span>
+                <div style={{ display: "flex", gap: "10px", marginTop: "12px", flexWrap: "wrap" }}>
+                  <BtnSecondary onClick={startOver} label="✦ New prompt" />
+                  {!isInstant && <BtnSecondary onClick={() => { setStep(4); setGeneratedPrompt(""); setRefineHistory([]); setPromptVersions([]); }} label="↻ Edit answers" />}
+                  <BtnPrimary onClick={regenerate} label="⟳ Different version" />
+                </div>
+
+                {/* Version history */}
+                {promptVersions.length > 1 && (
+                  <div style={S.versionsBox}>
+                    <div style={S.versionsTitle}>Version History</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                      {promptVersions.map((v, i) => (
+                        <button key={i} onClick={() => revertToVersion(i)} className="btn-secondary"
+                          style={{ ...S.versionBtn, borderColor: generatedPrompt === v ? "rgba(201,168,76,0.3)" : "rgba(255,255,255,0.04)" }}>
+                          <span style={{ fontSize: "12px", fontWeight: 600, color: "#c9a84c" }}>v{i + 1}</span>
+                          <span style={{ fontSize: "12px", color: "#6d675e" }}>{v.length > 80 ? v.slice(0, 80) + "..." : v}</span>
+                          {generatedPrompt === v && <span style={{ fontSize: "10px", color: "#c9a84c", marginLeft: "auto" }}>current</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 )}
-              </div>
-            </div>
+
+                {/* Refinement panel */}
+                <div style={S.refineBox}>
+                  <div style={S.refineTitle}>Refine your prompt</div>
+                  <p style={S.refineSub}>Tell us what to change — the AI will adjust your prompt while keeping everything else.</p>
+
+                  {refineHistory.filter(m => m.role === "user").length > 0 && (
+                    <div style={{ marginBottom: "14px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {refineHistory.filter(m => m.role === "user").map((m, i) => (
+                        <div key={i} style={S.refineMsg}>
+                          <span style={{ color: "#c9a84c", fontSize: "11px", fontWeight: 600 }}>You:</span>
+                          <span style={{ color: "#8a857c", fontSize: "13px" }}>{m.content.split("Requested change: ")[1] || m.content}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div style={S.refineInputWrap}>
+                    <input ref={refineRef} type="text" value={refineInput} onChange={e => setRefineInput(e.target.value)}
+                      placeholder='e.g. "Make the tone more casual" or "Add a section about error handling"'
+                      style={S.refineInput}
+                      onKeyDown={e => { if (e.key === "Enter") submitRefinement(); }}
+                      disabled={isRefining} />
+                    <button onClick={submitRefinement} disabled={!refineInput.trim() || isRefining} className="btn-primary"
+                      style={{ ...S.refineSendBtn, opacity: refineInput.trim() && !isRefining ? 1 : 0.4 }}>
+                      {isRefining ? "..." : "→"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tips */}
+                <div style={S.tipsCard}>
+                  <div style={S.tipsHeader}>Tips for best results</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                    <span style={S.tipItem}>Paste this at the <strong>start</strong> of a new chat in {targetAI}</span>
+                    <span style={S.tipItem}>Use the <strong>refinement panel</strong> above to tweak the prompt without starting over</span>
+                    <span style={S.tipItem}>Hit <strong>Different version</strong> for an alternate take on the same topic</span>
+                  </div>
+                </div>
+              </Fade>
+            )}
           </Fade>
         )}
 
@@ -564,18 +717,19 @@ export default function PromptCraft() {
               <div style={S.histList}>
                 {history.map((h, i) => (
                   <div key={i} className="hist-item" style={S.histItem}
-                    onClick={() => { setGeneratedPrompt(h.prompt); setTargetAI(h.targetAI); setCopied(false); if (step !== 6) setStep(6); }}>
+                    onClick={() => { setGeneratedPrompt(h.prompt); setTargetAI(h.targetAI); setCopied(false); setRefineHistory([]); setPromptVersions([h.prompt]); if (step !== 6) setStep(6); }}>
                     <div style={S.histTop}>
-                      <div style={S.histTags}>
+                      <div style={{ display: "flex", gap: "6px" }}>
                         <span style={S.histTag}>{h.targetAI}</span>
                         <span style={S.histTag}>{h.detail}</span>
                       </div>
-                      <span style={S.histTime}>{h.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      <span style={{ fontSize: "11px", color: "#3a3632" }}>{h.time instanceof Date ? h.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
                     </div>
-                    <div style={S.histTopic}>{h.topic}</div>
-                    <div style={S.histPreview}>{h.prompt.length > 100 ? h.prompt.slice(0, 100) + "..." : h.prompt}</div>
+                    <div style={{ fontSize: "14px", fontWeight: 500, color: "#b0aa9f", marginBottom: "4px" }}>{h.topic}</div>
+                    <div style={{ fontSize: "12px", color: "#5a554c", lineHeight: 1.4 }}>{h.prompt.length > 100 ? h.prompt.slice(0, 100) + "..." : h.prompt}</div>
                   </div>
                 ))}
+                <button onClick={() => { setHistory([]); Storage.set("history", []); }} className="btn-secondary" style={{ ...S.secBtn, marginTop: "8px", fontSize: "12px", color: "#5a554c" }}>Clear history</button>
               </div>
             )}
           </div>
@@ -588,335 +742,163 @@ export default function PromptCraft() {
         @keyframes fadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
         @keyframes spin { to { transform:rotate(360deg); } }
         @keyframes pulse { 0%,100%{opacity:0.4;} 50%{opacity:1;} }
-        @keyframes shimmer {
-          0% { background-position: -200% center; }
-          100% { background-position: 200% center; }
-        }
-        @keyframes goldPulse {
-          0%,100% { box-shadow: 0 0 8px rgba(201,168,76,0.12); }
-          50% { box-shadow: 0 0 20px rgba(201,168,76,0.22); }
-        }
+        @keyframes shimmer { 0% { background-position:-200% center; } 100% { background-position:200% center; } }
+        @keyframes goldPulse { 0%,100% { box-shadow:0 0 8px rgba(201,168,76,0.12); } 50% { box-shadow:0 0 20px rgba(201,168,76,0.22); } }
+        @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
         * { box-sizing:border-box; }
-        textarea::placeholder, input::placeholder { color: #44403a !important; }
-        textarea:focus, input:focus { outline:none; border-color: rgba(201,168,76,0.4) !important; }
+        textarea::placeholder, input::placeholder { color:#44403a !important; }
+        textarea:focus, input:focus { outline:none; border-color:rgba(201,168,76,0.4) !important; }
         button { font-family:'Outfit',sans-serif; }
-        ::-webkit-scrollbar { width: 5px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(201,168,76,0.15); border-radius: 3px; }
-        .btn-primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(201,168,76,0.25); }
-        .btn-secondary:hover { border-color: rgba(201,168,76,0.3); color: #c9a84c; transform: translateY(-1px); }
-        .btn-back:hover { color: #c9a84c; }
-        .btn-copy:hover { background: rgba(201,168,76,0.08); }
-        .hist-item:hover { border-color: rgba(201,168,76,0.2) !important; background: rgba(201,168,76,0.03) !important; }
+        ::-webkit-scrollbar { width:5px; }
+        ::-webkit-scrollbar-thumb { background:rgba(201,168,76,0.15); border-radius:3px; }
+        .btn-primary:hover:not(:disabled) { transform:translateY(-2px); box-shadow:0 8px 30px rgba(201,168,76,0.25); }
+        .btn-secondary:hover { border-color:rgba(201,168,76,0.3) !important; color:#c9a84c !important; transform:translateY(-1px); }
+        .btn-back:hover { color:#c9a84c !important; }
+        .btn-copy:hover { background:rgba(201,168,76,0.08) !important; }
+        .hist-item:hover { border-color:rgba(201,168,76,0.2) !important; background:rgba(201,168,76,0.03) !important; }
+        .template-card:hover { border-color:rgba(201,168,76,0.4) !important; background:rgba(201,168,76,0.04) !important; transform:translateY(-2px) !important; }
       `}</style>
     </div>
   );
 }
 
-// ── Sub-components ──
+// ═══════════════════════════════════════════════════════════════
+// SUB-COMPONENTS
+// ═══════════════════════════════════════════════════════════════
 
-function Fade({ children }) {
-  return <div style={{ animation: "fadeUp 0.5s ease forwards" }}>{children}</div>;
-}
+function Fade({ children }) { return <div style={{ animation: "fadeUp 0.5s ease forwards" }}>{children}</div>; }
 
 function SH({ title, desc }) {
   return (
     <div style={{ marginBottom: "28px" }}>
-      <h2 style={{
-        fontFamily: "'Cormorant Garamond',Georgia,serif",
-        fontSize: "clamp(22px,4.5vw,32px)", fontWeight: 700,
-        color: "#f0ece4", margin: "0 0 10px", lineHeight: 1.2, letterSpacing: "-0.3px",
-      }}>{title}</h2>
+      <h2 style={{ fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: "clamp(22px,4.5vw,32px)", fontWeight: 700, color: "#f0ece4", margin: "0 0 10px", lineHeight: 1.2, letterSpacing: "-0.3px" }}>{title}</h2>
       <p style={{ fontSize: "15px", color: "#6d675e", margin: 0, lineHeight: 1.55 }}>{desc}</p>
     </div>
   );
 }
 
-function GoldSpinner() {
-  return <div style={{ width: "36px", height: "36px", border: "2.5px solid rgba(201,168,76,0.1)", borderTopColor: "#c9a84c", borderRadius: "50%", animation: "spin 0.9s linear infinite", margin: "0 auto 20px" }} />;
-}
+function GoldSpinner() { return <div style={{ width: "36px", height: "36px", border: "2.5px solid rgba(201,168,76,0.1)", borderTopColor: "#c9a84c", borderRadius: "50%", animation: "spin 0.9s linear infinite", margin: "0 auto 20px" }} />; }
 
 function BtnPrimary({ onClick, disabled, label }) {
-  return (
-    <button className="btn-primary" onClick={onClick} disabled={disabled} style={{
-      padding: "14px 30px", borderRadius: "10px", border: "1px solid rgba(201,168,76,0.3)",
-      background: "linear-gradient(135deg, #b8942f, #c9a84c, #d4b85a)",
-      color: "#0a0a0a", fontSize: "14px", fontWeight: 700, cursor: disabled ? "default" : "pointer",
-      opacity: disabled ? 0.35 : 1, transition: "all 0.3s ease", display: "flex", alignItems: "center",
-      letterSpacing: "0.3px", textTransform: "uppercase",
-    }}>{label}</button>
-  );
+  return <button className="btn-primary" onClick={onClick} disabled={disabled} style={{ padding: "14px 30px", borderRadius: "10px", border: "1px solid rgba(201,168,76,0.3)", background: "linear-gradient(135deg,#b8942f,#c9a84c,#d4b85a)", color: "#0a0a0a", fontSize: "14px", fontWeight: 700, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1, transition: "all 0.3s ease", display: "flex", alignItems: "center", letterSpacing: "0.3px", textTransform: "uppercase" }}>{label}</button>;
 }
 
 function BtnSecondary({ onClick, label }) {
-  return (
-    <button className="btn-secondary" onClick={onClick} style={{
-      padding: "12px 22px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)",
-      background: "transparent", color: "#7a756c", fontSize: "13px", fontWeight: 500,
-      cursor: "pointer", transition: "all 0.3s ease",
-    }}>{label}</button>
-  );
+  return <button className="btn-secondary" onClick={onClick} style={{ padding: "12px 22px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)", background: "transparent", color: "#7a756c", fontSize: "13px", fontWeight: 500, cursor: "pointer", transition: "all 0.3s ease" }}>{label}</button>;
 }
 
 function BtnBack({ onClick }) {
-  return (
-    <button className="btn-back" onClick={onClick} style={{
-      padding: "12px 18px", borderRadius: "10px", border: "none", background: "transparent",
-      color: "#5a554c", fontSize: "14px", fontWeight: 500, cursor: "pointer", transition: "all 0.25s ease",
-    }}>← Back</button>
-  );
+  return <button className="btn-back" onClick={onClick} style={{ padding: "12px 18px", borderRadius: "10px", border: "none", background: "transparent", color: "#5a554c", fontSize: "14px", fontWeight: 500, cursor: "pointer", transition: "all 0.25s ease" }}>← Back</button>;
 }
 
 function BtnCopy({ onClick, copied }) {
-  return (
-    <button className="btn-copy" onClick={onClick} style={{
-      padding: "7px 16px", borderRadius: "6px", border: "1px solid rgba(201,168,76,0.25)",
-      background: copied ? "rgba(201,168,76,0.1)" : "transparent",
-      color: "#c9a84c", fontSize: "12px", fontWeight: 600, cursor: "pointer",
-      transition: "all 0.25s ease", letterSpacing: "0.5px", textTransform: "uppercase",
-    }}>{copied ? "✓ Copied" : "Copy"}</button>
-  );
+  return <button className="btn-copy" onClick={onClick} style={{ padding: "7px 16px", borderRadius: "6px", border: "1px solid rgba(201,168,76,0.25)", background: copied ? "rgba(201,168,76,0.1)" : "transparent", color: "#c9a84c", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.25s ease", letterSpacing: "0.5px", textTransform: "uppercase" }}>{copied ? "✓ Copied" : "Copy"}</button>;
 }
 
-// ── Styles ──
+// ═══════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════
 
 const S = {
-  page: {
-    minHeight: "100vh", background: "#050505", color: "#e8e4db",
-    fontFamily: "'Outfit',sans-serif", position: "relative", overflow: "hidden",
-  },
-  glowTop: {
-    position: "fixed", top: "-250px", right: "-200px", width: "650px", height: "650px",
-    background: "radial-gradient(circle, rgba(201,168,76,0.045) 0%, transparent 60%)",
-    pointerEvents: "none",
-  },
-  glowBot: {
-    position: "fixed", bottom: "-250px", left: "-150px", width: "550px", height: "550px",
-    background: "radial-gradient(circle, rgba(120,100,180,0.025) 0%, transparent 60%)",
-    pointerEvents: "none",
-  },
-  grain: {
-    position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, opacity: 0.025,
-    backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-  },
-  container: {
-    maxWidth: "700px", margin: "0 auto", padding: "48px 24px 120px",
-    position: "relative", zIndex: 1,
-  },
+  page: { minHeight: "100vh", background: "#050505", color: "#e8e4db", fontFamily: "'Outfit',sans-serif", position: "relative", overflow: "hidden" },
+  glowTop: { position: "fixed", top: "-250px", right: "-200px", width: "650px", height: "650px", background: "radial-gradient(circle,rgba(201,168,76,0.045) 0%,transparent 60%)", pointerEvents: "none" },
+  glowBot: { position: "fixed", bottom: "-250px", left: "-150px", width: "550px", height: "550px", background: "radial-gradient(circle,rgba(120,100,180,0.025) 0%,transparent 60%)", pointerEvents: "none" },
+  grain: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, opacity: 0.025, backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")` },
+  container: { maxWidth: "700px", margin: "0 auto", padding: "48px 24px 120px", position: "relative", zIndex: 1 },
   header: { textAlign: "center", marginBottom: "36px" },
-  logoBadge: {
-    display: "inline-flex", alignItems: "center", gap: "8px",
-    padding: "7px 18px", borderRadius: "100px",
-    background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.12)",
-    fontSize: "12px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase",
-    color: "#c9a84c", marginBottom: "20px",
-  },
-  logoIcon: { fontSize: "14px" },
-  title: {
-    fontFamily: "'Cormorant Garamond',Georgia,serif",
-    fontSize: "clamp(32px,7vw,52px)", fontWeight: 700,
-    lineHeight: 1.08, margin: "0 0 16px", color: "#f0ece4", letterSpacing: "-0.5px",
-  },
-  goldText: {
-    background: "linear-gradient(135deg, #c9a84c 0%, #e8d48b 40%, #c9a84c 70%, #a88a30 100%)",
-    backgroundSize: "200% auto",
-    WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-    animation: "shimmer 6s linear infinite",
-  },
-  subtitle: {
-    fontSize: "16px", color: "#6d675e", fontWeight: 300, lineHeight: 1.65,
-    maxWidth: "520px", margin: "0 auto",
-  },
-  divider: {
-    display: "flex", alignItems: "center", gap: "16px",
-    marginTop: "28px", justifyContent: "center",
-  },
-  dividerLine: { width: "60px", height: "1px", background: "linear-gradient(to right, transparent, rgba(201,168,76,0.15), transparent)" },
-  dividerDot: { color: "#c9a84c", fontSize: "10px", opacity: 0.4 },
-
+  logoBadge: { display: "inline-flex", alignItems: "center", gap: "8px", padding: "7px 18px", borderRadius: "100px", background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.12)", fontSize: "12px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#c9a84c", marginBottom: "20px" },
+  title: { fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: "clamp(32px,7vw,52px)", fontWeight: 700, lineHeight: 1.08, margin: "0 0 16px", color: "#f0ece4", letterSpacing: "-0.5px" },
+  goldText: { background: "linear-gradient(135deg,#c9a84c 0%,#e8d48b 40%,#c9a84c 70%,#a88a30 100%)", backgroundSize: "200% auto", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", animation: "shimmer 6s linear infinite" },
+  subtitle: { fontSize: "16px", color: "#6d675e", fontWeight: 300, lineHeight: 1.65, maxWidth: "520px", margin: "0 auto" },
+  divider: { display: "flex", alignItems: "center", gap: "16px", marginTop: "28px", justifyContent: "center" },
+  divLine: { width: "60px", height: "1px", background: "linear-gradient(to right,transparent,rgba(201,168,76,0.15),transparent)" },
+  divDot: { color: "#c9a84c", fontSize: "10px", opacity: 0.4 },
   progressWrap: { marginBottom: "40px" },
-  progressTrack: {
-    height: "2px", borderRadius: "2px", background: "rgba(255,255,255,0.04)",
-    overflow: "hidden", marginBottom: "10px",
-  },
-  progressFill: {
-    height: "100%", borderRadius: "2px",
-    background: "linear-gradient(90deg, #a88a30, #c9a84c, #d4b85a)",
-    transition: "width 0.6s ease",
-  },
+  progressTrack: { height: "2px", borderRadius: "2px", background: "rgba(255,255,255,0.04)", overflow: "hidden", marginBottom: "10px" },
+  progressFill: { height: "100%", borderRadius: "2px", background: "linear-gradient(90deg,#a88a30,#c9a84c,#d4b85a)", transition: "width 0.6s ease" },
   progressLabels: { display: "flex", justifyContent: "space-between", padding: "0 2px" },
-  progressLabel: {
-    fontSize: "10px", fontWeight: 600, letterSpacing: "0.8px",
-    textTransform: "uppercase", transition: "color 0.3s",
-  },
+  progressLabel: { fontSize: "10px", fontWeight: 600, letterSpacing: "0.8px", textTransform: "uppercase", transition: "color 0.3s" },
 
   detailGrid: { display: "flex", flexDirection: "column", gap: "12px" },
-  detailCard: {
-    padding: "24px", borderRadius: "14px",
-    border: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)",
-    cursor: "pointer", textAlign: "left",
-    transition: "all 0.35s cubic-bezier(0.4,0,0.2,1)", color: "#e8e4db",
-  },
+  detailCard: { padding: "24px", borderRadius: "14px", border: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)", cursor: "pointer", textAlign: "left", transition: "all 0.35s cubic-bezier(0.4,0,0.2,1)", color: "#e8e4db" },
   detailIcon: { fontSize: "20px", color: "#c9a84c", marginBottom: "8px" },
-  detailLabel: {
-    fontSize: "20px", fontWeight: 700, marginBottom: "2px",
-    fontFamily: "'Cormorant Garamond',Georgia,serif", color: "#f0ece4",
-  },
+  detailLabel: { fontSize: "20px", fontWeight: 700, marginBottom: "2px", fontFamily: "'Cormorant Garamond',Georgia,serif", color: "#f0ece4" },
   detailTagline: { fontSize: "13px", color: "#c9a84c", fontWeight: 500, marginBottom: "8px" },
   detailDesc: { fontSize: "14px", color: "#6d675e", lineHeight: 1.5, marginBottom: "12px" },
-  detailFooter: { display: "flex", alignItems: "center" },
-  detailQuestions: {
-    fontSize: "11px", fontWeight: 600, color: "#8a857c",
-    textTransform: "uppercase", letterSpacing: "0.8px",
-    padding: "4px 10px", borderRadius: "4px",
-    background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.04)",
-  },
+  detailBadge: { fontSize: "11px", fontWeight: 600, color: "#8a857c", textTransform: "uppercase", letterSpacing: "0.8px", padding: "4px 10px", borderRadius: "4px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.04)" },
 
-  // AI chips
-  aiChipsWrap: {
-    display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "20px",
-  },
-  aiChip: {
-    padding: "10px 18px", borderRadius: "8px",
-    border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)",
-    color: "#7a756c", fontSize: "14px", fontWeight: 500,
-    cursor: "pointer", transition: "all 0.25s ease",
-    display: "flex", alignItems: "center",
-  },
-  orDivider: {
-    display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px",
-  },
+  // Templates
+  templateCatBar: { display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "16px" },
+  templateCatBtn: { padding: "6px 14px", borderRadius: "6px", border: "1px solid transparent", background: "transparent", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s" },
+  templateGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" },
+  templateCard: { padding: "16px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)", cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: "6px", transition: "all 0.3s ease", minHeight: "130px" },
+  tinyTag: { fontSize: "10px", fontWeight: 600, color: "#8a857c", textTransform: "uppercase", padding: "2px 6px", borderRadius: "3px", background: "rgba(255,255,255,0.03)", letterSpacing: "0.3px" },
+
+  // AI chips & card
+  aiChipsWrap: { display: "flex", flexWrap: "wrap", gap: "8px", marginBottom: "20px" },
+  aiChip: { padding: "10px 18px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)", color: "#7a756c", fontSize: "14px", fontWeight: 500, cursor: "pointer", transition: "all 0.25s ease", display: "flex", alignItems: "center" },
+  orDivider: { display: "flex", alignItems: "center", gap: "14px", marginBottom: "16px" },
   orLine: { flex: 1, height: "1px", background: "rgba(255,255,255,0.05)" },
-  orText: {
-    fontSize: "11px", fontWeight: 500, color: "#4a4540",
-    textTransform: "uppercase", letterSpacing: "0.8px",
-  },
-
-  card: {
-    background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)",
-    borderRadius: "16px", padding: "28px",
-  },
-  inputLabel: {
-    display: "block", fontSize: "12px", fontWeight: 600, color: "#8a857c",
-    marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.8px",
-  },
-  input: {
-    width: "100%", padding: "15px 18px", borderRadius: "10px",
-    border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)",
-    color: "#e8e4db", fontSize: "16px", fontFamily: "'Outfit',sans-serif",
-    transition: "border-color 0.25s",
-  },
-  textarea: {
-    width: "100%", padding: "15px 18px", borderRadius: "10px",
-    border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)",
-    color: "#e8e4db", fontSize: "15px", fontFamily: "'Outfit',sans-serif",
-    resize: "vertical", lineHeight: 1.55, transition: "border-color 0.25s",
-  },
-  cardActions: {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    marginTop: "20px", gap: "12px", flexWrap: "wrap",
-  },
+  orText: { fontSize: "11px", fontWeight: 500, color: "#4a4540", textTransform: "uppercase", letterSpacing: "0.8px" },
+  card: { background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "16px", padding: "28px" },
+  inputLabel: { display: "block", fontSize: "12px", fontWeight: 600, color: "#8a857c", marginBottom: "10px", textTransform: "uppercase", letterSpacing: "0.8px" },
+  input: { width: "100%", padding: "15px 18px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)", color: "#e8e4db", fontSize: "16px", fontFamily: "'Outfit',sans-serif", transition: "border-color 0.25s" },
+  textarea: { width: "100%", padding: "15px 18px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)", color: "#e8e4db", fontSize: "15px", fontFamily: "'Outfit',sans-serif", resize: "vertical", lineHeight: 1.55, transition: "border-color 0.25s" },
+  cardActions: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px", gap: "12px", flexWrap: "wrap" },
 
   loadBox: { textAlign: "center", padding: "70px 20px" },
   loadTitle: { fontSize: "18px", fontWeight: 600, color: "#f0ece4", margin: "0 0 8px", animation: "pulse 1.8s ease infinite" },
   loadSub: { fontSize: "14px", color: "#5a554c", margin: 0 },
 
   questionsWrap: { display: "flex", flexDirection: "column", gap: "12px", marginBottom: "20px" },
-  qCard: {
-    display: "flex", gap: "14px", padding: "22px", borderRadius: "14px",
-    background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)",
-  },
-  qNum: {
-    width: "26px", height: "26px", borderRadius: "50%",
-    background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.15)",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    fontSize: "12px", fontWeight: 700, color: "#c9a84c", flexShrink: 0, marginTop: "2px",
-  },
+  qCard: { display: "flex", gap: "14px", padding: "22px", borderRadius: "14px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)" },
+  qNum: { width: "26px", height: "26px", borderRadius: "50%", background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#c9a84c", flexShrink: 0, marginTop: "2px" },
   qLabel: { display: "block", fontSize: "15px", fontWeight: 500, color: "#e8e4db", marginBottom: "10px", lineHeight: 1.45 },
-  qInput: {
-    width: "100%", padding: "12px 14px", borderRadius: "8px",
-    border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)",
-    color: "#e8e4db", fontSize: "14px", fontFamily: "'Outfit',sans-serif",
-    resize: "vertical", lineHeight: 1.5, transition: "border-color 0.25s",
-  },
-  aBadge: {
-    marginLeft: "10px", padding: "2px 10px", borderRadius: "100px",
-    background: "rgba(0,0,0,0.25)", fontSize: "11px", fontWeight: 500,
-  },
-  errorBox: {
-    padding: "14px 18px", borderRadius: "10px",
-    background: "rgba(180,60,60,0.08)", border: "1px solid rgba(180,60,60,0.15)",
-    color: "#d48080", fontSize: "14px", marginBottom: "16px",
-  },
+  qInput: { width: "100%", padding: "12px 14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.4)", color: "#e8e4db", fontSize: "14px", fontFamily: "'Outfit',sans-serif", resize: "vertical", lineHeight: 1.5, transition: "border-color 0.25s" },
+  aBadge: { marginLeft: "10px", padding: "2px 10px", borderRadius: "100px", background: "rgba(0,0,0,0.25)", fontSize: "11px", fontWeight: 500 },
+  errorBox: { padding: "14px 18px", borderRadius: "10px", background: "rgba(180,60,60,0.08)", border: "1px solid rgba(180,60,60,0.15)", color: "#d48080", fontSize: "14px", marginBottom: "16px" },
 
-  resultBadge: {
-    display: "inline-block", padding: "8px 22px", borderRadius: "100px",
-    background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.15)",
-    fontSize: "14px", fontWeight: 600, color: "#c9a84c", marginBottom: "12px", letterSpacing: "0.3px",
-  },
+  // Result
+  resultBadge: { display: "inline-block", padding: "8px 22px", borderRadius: "100px", background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.15)", fontSize: "14px", fontWeight: 600, color: "#c9a84c", marginBottom: "12px", letterSpacing: "0.3px" },
   resultSub: { fontSize: "15px", color: "#6d675e", margin: 0, lineHeight: 1.5 },
-  resultCard: {
-    borderRadius: "16px", background: "rgba(255,255,255,0.015)",
-    border: "1px solid rgba(201,168,76,0.12)", overflow: "hidden",
-    animation: "goldPulse 3s ease infinite",
-  },
-  resultHeader: {
-    display: "flex", justifyContent: "space-between", alignItems: "center",
-    padding: "14px 22px", borderBottom: "1px solid rgba(255,255,255,0.04)",
-    flexWrap: "wrap", gap: "8px",
-  },
+  resultCard: { borderRadius: "16px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(201,168,76,0.12)", overflow: "hidden" },
+  resultHeader: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 22px", borderBottom: "1px solid rgba(255,255,255,0.04)", flexWrap: "wrap", gap: "8px" },
   resultMeta: { display: "flex", alignItems: "center", gap: "8px" },
-  resultMetaTag: {
-    fontSize: "11px", fontWeight: 600, color: "#8a857c", textTransform: "uppercase", letterSpacing: "0.6px",
-  },
-  resultMetaDot: { color: "#3a3632", fontSize: "10px" },
-  resultText: {
-    padding: "26px", margin: 0, fontSize: "16px", lineHeight: 1.8,
-    color: "#e8e4db", fontWeight: 300, whiteSpace: "pre-wrap",
-  },
-  resultActions: { display: "flex", gap: "10px", marginTop: "20px", flexWrap: "wrap" },
+  metaTag: { fontSize: "11px", fontWeight: 600, color: "#8a857c", textTransform: "uppercase", letterSpacing: "0.6px" },
+  resultText: { padding: "26px", margin: 0, fontSize: "16px", lineHeight: 1.8, color: "#e8e4db", fontWeight: 300, whiteSpace: "pre-wrap", minHeight: "60px" },
+  cursor: { display: "inline-block", animation: "blink 0.8s step-end infinite", color: "#c9a84c", fontWeight: 300 },
 
-  tipsCard: {
-    marginTop: "32px", padding: "22px", borderRadius: "12px",
-    background: "rgba(120,100,180,0.03)", border: "1px solid rgba(120,100,180,0.08)",
-  },
-  tipsHeader: {
-    fontSize: "12px", fontWeight: 700, color: "rgba(160,140,210,0.7)",
-    marginBottom: "14px", textTransform: "uppercase", letterSpacing: "1px",
-  },
-  tipsList: { display: "flex", flexDirection: "column", gap: "8px" },
-  tipItem: {
-    fontSize: "13px", color: "#6d675e", lineHeight: 1.5,
-    paddingLeft: "14px", borderLeft: "2px solid rgba(120,100,180,0.12)",
-  },
+  // Export bar
+  exportBar: { display: "flex", gap: "8px", marginTop: "16px", flexWrap: "wrap" },
+  exportBtn: { padding: "10px 16px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.015)", color: "#8a857c", fontSize: "12px", fontWeight: 500, cursor: "pointer", transition: "all 0.25s ease" },
 
-  historySection: {
-    marginTop: "56px", paddingTop: "28px", borderTop: "1px solid rgba(255,255,255,0.03)",
-  },
-  histToggle: {
-    background: "none", border: "none", color: "#5a554c", fontSize: "13px",
-    cursor: "pointer", fontWeight: 500, padding: 0, display: "flex", alignItems: "center",
-    transition: "color 0.2s",
-  },
-  histCount: {
-    marginLeft: "6px", padding: "1px 8px", borderRadius: "4px",
-    background: "rgba(201,168,76,0.08)", color: "#c9a84c", fontSize: "11px", fontWeight: 600,
-  },
-  histList: {
-    marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", animation: "fadeUp 0.3s ease",
-  },
-  histItem: {
-    padding: "16px 20px", borderRadius: "12px",
-    background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.04)",
-    cursor: "pointer", transition: "all 0.25s ease",
-  },
+  secBtn: { padding: "12px 22px", borderRadius: "10px", border: "1px solid rgba(255,255,255,0.07)", background: "transparent", color: "#7a756c", fontSize: "13px", fontWeight: 500, cursor: "pointer", transition: "all 0.3s ease" },
+
+  // Versions
+  versionsBox: { marginTop: "24px", padding: "18px", borderRadius: "12px", background: "rgba(192,192,192,0.02)", border: "1px solid rgba(192,192,192,0.06)" },
+  versionsTitle: { fontSize: "12px", fontWeight: 700, color: "rgba(192,192,192,0.5)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: "10px" },
+  versionBtn: { display: "flex", alignItems: "center", gap: "10px", padding: "10px 14px", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.04)", background: "transparent", cursor: "pointer", transition: "all 0.2s", textAlign: "left", width: "100%" },
+
+  // Refinement
+  refineBox: { marginTop: "28px", padding: "22px", borderRadius: "14px", background: "rgba(201,168,76,0.02)", border: "1px solid rgba(201,168,76,0.08)" },
+  refineTitle: { fontSize: "14px", fontWeight: 700, color: "#c9a84c", marginBottom: "6px" },
+  refineSub: { fontSize: "13px", color: "#6d675e", marginBottom: "16px", lineHeight: 1.5 },
+  refineMsg: { display: "flex", gap: "8px", padding: "8px 12px", borderRadius: "8px", background: "rgba(201,168,76,0.03)", border: "1px solid rgba(201,168,76,0.06)" },
+  refineInputWrap: { display: "flex", gap: "8px" },
+  refineInput: { flex: 1, padding: "12px 16px", borderRadius: "10px", border: "1px solid rgba(201,168,76,0.12)", background: "rgba(0,0,0,0.3)", color: "#e8e4db", fontSize: "14px", fontFamily: "'Outfit',sans-serif", transition: "border-color 0.25s" },
+  refineSendBtn: { padding: "12px 20px", borderRadius: "10px", border: "1px solid rgba(201,168,76,0.3)", background: "linear-gradient(135deg,#b8942f,#c9a84c)", color: "#0a0a0a", fontSize: "16px", fontWeight: 700, cursor: "pointer", transition: "all 0.3s ease" },
+
+  // Tips
+  tipsCard: { marginTop: "28px", padding: "22px", borderRadius: "12px", background: "rgba(120,100,180,0.03)", border: "1px solid rgba(120,100,180,0.08)" },
+  tipsHeader: { fontSize: "12px", fontWeight: 700, color: "rgba(160,140,210,0.7)", marginBottom: "14px", textTransform: "uppercase", letterSpacing: "1px" },
+  tipItem: { fontSize: "13px", color: "#6d675e", lineHeight: 1.5, paddingLeft: "14px", borderLeft: "2px solid rgba(120,100,180,0.12)" },
+
+  // History
+  historySection: { marginTop: "56px", paddingTop: "28px", borderTop: "1px solid rgba(255,255,255,0.03)" },
+  histToggle: { background: "none", border: "none", color: "#5a554c", fontSize: "13px", cursor: "pointer", fontWeight: 500, padding: 0, display: "flex", alignItems: "center", transition: "color 0.2s" },
+  histCount: { marginLeft: "6px", padding: "1px 8px", borderRadius: "4px", background: "rgba(201,168,76,0.08)", color: "#c9a84c", fontSize: "11px", fontWeight: 600 },
+  histList: { marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", animation: "fadeUp 0.3s ease" },
+  histItem: { padding: "16px 20px", borderRadius: "12px", background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", transition: "all 0.25s ease" },
   histTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" },
-  histTags: { display: "flex", gap: "6px" },
-  histTag: {
-    fontSize: "10px", fontWeight: 600, color: "#c9a84c", textTransform: "uppercase",
-    letterSpacing: "0.6px", padding: "2px 8px", borderRadius: "4px", background: "rgba(201,168,76,0.06)",
-  },
-  histTime: { fontSize: "11px", color: "#3a3632" },
-  histTopic: { fontSize: "14px", fontWeight: 500, color: "#b0aa9f", marginBottom: "4px" },
-  histPreview: { fontSize: "12px", color: "#5a554c", lineHeight: 1.4 },
+  histTag: { fontSize: "10px", fontWeight: 600, color: "#c9a84c", textTransform: "uppercase", letterSpacing: "0.6px", padding: "2px 8px", borderRadius: "4px", background: "rgba(201,168,76,0.06)" },
 };
