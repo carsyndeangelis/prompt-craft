@@ -478,7 +478,7 @@ export default function ObsidiaAI() {
         {/* Header */}
         <header style={S.header}>
           <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Obsidia AI</div>
-          <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span> With Obsidia AI</h1>
+          <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span> With <span style={S.goldText}>Obsidia AI</span></h1>
           <p style={S.subtitle}>Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.</p>
           <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
         </header>
