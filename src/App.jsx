@@ -671,6 +671,13 @@ export default function ObsidiaAI() {
         {step === 4 && (
           <Fade>
             <SH title={detailLevel?.id === "standard" ? "A few questions to fine-tune" : "Let's get the details right"} desc={`Your answers help build a better prompt for ${targetAI}.`} />
+            {/* Context reference strip */}
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "20px", padding: "12px 16px", borderRadius: "10px", background: "rgba(201,168,76,0.03)", border: "1px solid rgba(201,168,76,0.08)" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, color: "#6d675e", textTransform: "uppercase", letterSpacing: "0.8px", alignSelf: "center", marginRight: "4px" }}>Context:</span>
+              <span style={{ fontSize: "12px", color: "#c9a84c", background: "rgba(201,168,76,0.06)", padding: "3px 10px", borderRadius: "4px", fontWeight: 600 }}>{targetAI}</span>
+              <span style={{ fontSize: "12px", color: "#8a857c", background: "rgba(255,255,255,0.03)", padding: "3px 10px", borderRadius: "4px" }}>{detailLevel?.label}</span>
+              <span style={{ fontSize: "12px", color: "#b0aa9f", background: "rgba(255,255,255,0.03)", padding: "3px 10px", borderRadius: "4px", fontStyle: "italic", maxWidth: "100%" }}>{topic.length > 60 ? topic.slice(0, 60) + "…" : topic}</span>
+            </div>
             {error && <div style={S.errorBox}>{error}</div>}
             <div style={S.questionsWrap}>
               {questions.map((q, i) => (
