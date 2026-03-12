@@ -1,3 +1,4 @@
+// prompt-craft — main app
 import { useState, useRef, useEffect, useCallback } from "react";
 
 // ═══════════════════════════════════════════════════════════════
