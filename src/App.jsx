@@ -462,7 +462,7 @@ export default function ObsidiaAI() {
         {/* Header */}
         <header style={S.header}>
           <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Obsidia AI</div>
-          <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span></h1>
+          <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span> With Obsidia AI</h1>
           <p style={S.subtitle}>Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.</p>
           <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
         </header>
@@ -538,7 +538,7 @@ export default function ObsidiaAI() {
                     {history.length > 0 && <button onClick={() => { setHistory([]); Storage.set("history", []); }} className="btn-secondary" style={{ ...S.secBtn, fontSize: "11px", padding: "6px 12px", color: "#5a554c" }}>Clear all</button>}
                   </div>
                   {history.length === 0 ? (
-                    <div style={{ padding: "40px 20px", textAlign: "center", borderRadius: "14px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.05)" }}>
+                    <div style={{ padding: "40px 20px", textAlign: "center", borderRadius: "14px", background: "rgba(255,255,255,0.015)", border: "1px solid rgba(255,255,255,0.45)" }}>
                       <div style={{ fontSize: "28px", marginBottom: "12px" }}>🕘</div>
                       <div style={{ fontSize: "15px", fontWeight: 500, color: "#8a857c", marginBottom: "6px" }}>No history yet</div>
                       <div style={{ fontSize: "13px", color: "#5a554c", lineHeight: 1.5 }}>Your generated prompts will appear here so you can reuse them anytime.</div>
@@ -870,7 +870,7 @@ const S = {
   templateCatBar: { display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "16px" },
   templateCatBtn: { padding: "6px 14px", borderRadius: "6px", border: "1px solid transparent", background: "transparent", fontSize: "12px", fontWeight: 600, cursor: "pointer", transition: "all 0.2s" },
   templateGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: "10px" },
-  templateCard: { padding: "16px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.05)", background: "rgba(255,255,255,0.015)", cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: "6px", transition: "all 0.3s ease", minHeight: "130px" },
+  templateCard: { padding: "16px", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.45)", background: "rgba(255,255,255,0.015)", cursor: "pointer", textAlign: "left", display: "flex", flexDirection: "column", gap: "6px", transition: "all 0.3s ease", minHeight: "130px" },
   tinyTag: { fontSize: "10px", fontWeight: 600, color: "#8a857c", textTransform: "uppercase", padding: "2px 6px", borderRadius: "3px", background: "rgba(255,255,255,0.03)", letterSpacing: "0.3px" },
 
   // AI chips & card
@@ -937,7 +937,7 @@ const S = {
   histToggle: { background: "none", border: "none", color: "#5a554c", fontSize: "13px", cursor: "pointer", fontWeight: 500, padding: 0, display: "flex", alignItems: "center", transition: "color 0.2s" },
   histCount: { marginLeft: "6px", padding: "1px 8px", borderRadius: "4px", background: "rgba(201,168,76,0.08)", color: "#c9a84c", fontSize: "11px", fontWeight: 600 },
   histList: { marginTop: "14px", display: "flex", flexDirection: "column", gap: "8px", animation: "fadeUp 0.3s ease" },
-  histItem: { padding: "16px 20px", borderRadius: "12px", background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.04)", cursor: "pointer", transition: "all 0.25s ease" },
+  histItem: { padding: "16px 20px", borderRadius: "12px", background: "rgba(255,255,255,0.01)", border: "1px solid rgba(255,255,255,0.45)", cursor: "pointer", transition: "all 0.25s ease" },
   histTop: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" },
   histTag: { fontSize: "10px", fontWeight: 600, color: "#c9a84c", textTransform: "uppercase", letterSpacing: "0.6px", padding: "2px 8px", borderRadius: "4px", background: "rgba(201,168,76,0.06)" },
 };
