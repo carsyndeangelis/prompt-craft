@@ -88,9 +88,9 @@ async function streamClaude(systemPrompt, messages, maxTokens, onChunk, onDone) 
 // ═══════════════════════════════════════════════════════════════
 
 const DETAIL_LEVELS = [
-  { id: "instant", label: "Instant", tagline: "No questions asked", desc: "Just tell us the topic and we'll generate a solid prompt immediately.", icon: "⚡", iconColor: "#c9a84c", questionCount: 0, maxTokens: 1000 },
-  { id: "standard", label: "Standard", tagline: "A well-rounded prompt", desc: "Good balance of detail and speed. We'll ask 3 questions.", icon: "◈", questionCount: 3, maxTokens: 1500 },
-  { id: "detailed", label: "Detailed", tagline: "Comprehensive, expert-level", desc: "Maximum quality. We'll ask 5 questions to build a thorough prompt.", icon: "✦", questionCount: 5, maxTokens: 2500 },
+  { id: "instant", label: "Instant", tagline: "No questions asked", desc: "Just tell us the topic and we'll generate a solid prompt immediately.", icon: "⚡", iconColor: "#c9a84c", questionCount: 0, maxQuestions: 0, maxTokens: 1000 },
+  { id: "standard", label: "Standard", tagline: "A well-rounded prompt", desc: "We'll ask only what we need — usually 2–4 targeted questions.", icon: "◈", questionCount: 3, maxQuestions: 5, maxTokens: 1500 },
+  { id: "detailed", label: "Detailed", tagline: "Comprehensive, expert-level", desc: "We'll ask up to 10 strategic questions, stopping as soon as we have everything needed.", icon: "✦", questionCount: 5, maxQuestions: 10, maxTokens: 2500 },
 ];
 
 const AI_PLATFORMS = [
@@ -147,11 +147,13 @@ function getQuestionsSystem(detail) {
 RULES:
 - Return ONLY valid JSON — no markdown, no backticks, no explanation
 - Format: { "questions": [ { "id": "q1", "question": "...", "placeholder": "..." }, ... ] }
-- Ask exactly ${d.questionCount} questions
-- ${detail === "standard" ? "Ask about the goal, audience/context, and format" : "Cover goal, audience, format, tone, constraints, and specifics"}
-- Tailor to the AI platform and topic
-- Keep questions conversational
-- Placeholders should be helpful examples`;
+- Ask between 1 and ${d.maxQuestions} questions — ask only what is truly necessary to write an excellent prompt
+- Start with the single most critical piece of missing information, then continue only if additional questions would meaningfully improve the result
+- Stop asking once you have enough — do NOT pad with unnecessary questions just to reach a maximum
+- ${detail === "standard" ? "Focus on: primary goal and intended audience. Add format/tone only if the topic is ambiguous." : "Cover: goal, audience, format, tone, constraints, and any domain-specific details the AI would need. Each question must earn its place."}
+- Tailor every question to the specific AI platform and topic
+- Keep questions conversational and concrete
+- Placeholders should be specific, realistic examples`;
 }
 
 function getPromptSystem(detail) {
@@ -526,7 +528,7 @@ export default function ObsidiaAI() {
                   <div style={S.detailLabel}>{level.label}</div>
                   <div style={S.detailTagline}>{level.tagline}</div>
                   <div style={S.detailDesc}>{level.desc}</div>
-                  <span style={S.detailBadge}>{level.questionCount === 0 ? "No questions" : `${level.questionCount} questions`}</span>
+                  <span style={S.detailBadge}>{level.maxQuestions === 0 ? "No questions" : `Up to ${level.maxQuestions} questions`}</span>
                 </button>
               ))}
             </div>
