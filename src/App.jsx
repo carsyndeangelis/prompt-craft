@@ -502,8 +502,9 @@ export default function ObsidiaAI() {
         {/* Header */}
         <header style={S.header}>
           <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Obsidia AI</div>
+          <div style={S.slogan}>AI for Students, from Students</div>
           <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span> With <span style={S.goldText}>Obsidia AI</span></h1>
-          <p style={S.subtitle}>Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.</p>
+          <p style={S.subtitle}>The difference between a mediocre AI response and a breakthrough one isn't the AI — it's the prompt. Obsidia AI was built by students who learned this the hard way. Tell us what you need, and we'll craft expert-level prompts that unlock AI's full potential for your essays, research, projects, and beyond.</p>
           <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
         </header>
 
@@ -935,7 +936,8 @@ const S = {
   grain: { position: "fixed", inset: 0, pointerEvents: "none", zIndex: 0, opacity: 0.025, backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")` },
   container: { maxWidth: "700px", margin: "0 auto", padding: "48px 24px 120px", position: "relative", zIndex: 1 },
   header: { textAlign: "center", marginBottom: "36px" },
-  logoBadge: { display: "inline-flex", alignItems: "center", gap: "8px", padding: "7px 18px", borderRadius: "100px", background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.12)", fontSize: "12px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#c9a84c", marginBottom: "20px" },
+  logoBadge: { display: "inline-flex", alignItems: "center", gap: "8px", padding: "7px 18px", borderRadius: "100px", background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.12)", fontSize: "12px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: "#c9a84c", marginBottom: "10px" },
+  slogan: { fontSize: "13px", fontWeight: 500, color: "#8a857c", letterSpacing: "1.5px", textTransform: "uppercase", marginBottom: "16px" },
   title: { fontFamily: "'Cormorant Garamond',Georgia,serif", fontSize: "clamp(32px,7vw,52px)", fontWeight: 700, lineHeight: 1.08, margin: "0 0 16px", color: "#f0ece4", letterSpacing: "-0.5px" },
   goldText: { background: "linear-gradient(135deg,#c9a84c 0%,#e8d48b 40%,#c9a84c 70%,#a88a30 100%)", backgroundSize: "200% auto", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", animation: "shimmer 6s linear infinite" },
   subtitle: { fontSize: "16px", color: "#6d675e", fontWeight: 300, lineHeight: 1.65, maxWidth: "520px", margin: "0 auto" },
