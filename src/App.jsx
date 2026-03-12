@@ -171,7 +171,7 @@ const REFINE_SYSTEM = `You are helping refine an AI prompt. The user will share 
 // ═══════════════════════════════════════════════════════════════
 
 function exportAsMarkdown(prompt, targetAI, detail, topic) {
-  return `# Prompt Craft — Generated Prompt\n\n**Platform:** ${targetAI}  \n**Detail Level:** ${detail}  \n**Topic:** ${topic}  \n**Generated:** ${new Date().toLocaleDateString()}\n\n---\n\n\`\`\`\n${prompt}\n\`\`\`\n`;
+  return `# Obsidia AI — Generated Prompt\n\n**Platform:** ${targetAI}  \n**Detail Level:** ${detail}  \n**Topic:** ${topic}  \n**Generated:** ${new Date().toLocaleDateString()}\n\n---\n\n\`\`\`\n${prompt}\n\`\`\`\n`;
 }
 
 function downloadFile(content, filename) {
@@ -188,7 +188,7 @@ function downloadFile(content, filename) {
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
 
-export default function PromptCraft() {
+export default function ObsidiaAI() {
   // Steps: 0=depth, 1=platform, 2=topic, 3=loading-q, 4=questions, 5=generating, 6=result
   const [step, setStep] = useState(0);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -427,7 +427,7 @@ export default function PromptCraft() {
     setCopiedMd(true); setTimeout(() => setCopiedMd(false), 2500);
   };
   const handleDownload = () => {
-    downloadFile(generatedPrompt, `prompt-craft-${Date.now()}.txt`);
+    downloadFile(generatedPrompt, `obsidia-ai-${Date.now()}.txt`);
   };
 
   const startOver = () => {
@@ -461,7 +461,7 @@ export default function PromptCraft() {
       <div style={S.container}>
         {/* Header */}
         <header style={S.header}>
-          <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Prompt Craft</div>
+          <div style={S.logoBadge}><span style={{ fontSize: "14px" }}>✦</span> Obsidia AI</div>
           <h1 style={S.title}>Craft Your <span style={S.goldText}>Perfect Prompt</span></h1>
           <p style={S.subtitle}>Tell us what you need, answer a few quick questions, and get an expert-level AI prompt — tailored to your platform and ready to paste.</p>
           <div style={S.divider}><div style={S.divLine} /><span style={S.divDot}>◈</span><div style={S.divLine} /></div>
