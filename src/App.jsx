@@ -213,6 +213,7 @@ export default function ObsidiaAI() {
   const [showHistory, setShowHistory] = useState(false);
   const [hoveredDetail, setHoveredDetail] = useState(null);
   const [hoveredAI, setHoveredAI] = useState(null);
+  const [showPromptTip, setShowPromptTip] = useState(false);
 
   // Refinement state
   const [refineInput, setRefineInput] = useState("");
@@ -809,6 +810,9 @@ export default function ObsidiaAI() {
         <div ref={bottomRef} />
       </div>
 
+      {/* Floating prompt tip widget */}
+      <PromptTip open={showPromptTip} onToggle={() => setShowPromptTip(v => !v)} />
+
       <style>{`
         @keyframes fadeUp { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
         @keyframes spin { to { transform:rotate(360deg); } }
@@ -836,6 +840,36 @@ export default function ObsidiaAI() {
 // ═══════════════════════════════════════════════════════════════
 // SUB-COMPONENTS
 // ═══════════════════════════════════════════════════════════════
+
+function PromptTip({ open, onToggle }) {
+  return (
+    <div style={{ position: "fixed", bottom: "24px", right: "24px", zIndex: 100, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "10px" }}>
+      {open && (
+        <div style={{ width: "300px", borderRadius: "14px", background: "#0e0d0b", border: "1px solid rgba(201,168,76,0.18)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)", animation: "fadeUp 0.3s ease forwards", overflow: "hidden" }}>
+          <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: "#c9a84c", textTransform: "uppercase", letterSpacing: "1.2px" }}>Why prompts matter</div>
+          </div>
+          <div style={{ padding: "14px 16px 16px", display: "flex", flexDirection: "column", gap: "10px" }}>
+            <div style={{ borderRadius: "8px", background: "rgba(180,60,60,0.07)", border: "1px solid rgba(180,60,60,0.12)", padding: "10px 12px" }}>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: "#a05050", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "5px" }}>✗ Vague</div>
+              <div style={{ fontSize: "13px", color: "#7a6b6b", lineHeight: 1.5, fontStyle: "italic" }}>"Write me a marketing email."</div>
+            </div>
+            <div style={{ borderRadius: "8px", background: "rgba(201,168,76,0.05)", border: "1px solid rgba(201,168,76,0.15)", padding: "10px 12px" }}>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: "#c9a84c", textTransform: "uppercase", letterSpacing: "0.8px", marginBottom: "5px" }}>✓ Specific</div>
+              <div style={{ fontSize: "13px", color: "#a09070", lineHeight: 1.5, fontStyle: "italic" }}>"Act as a conversion copywriter. Write a 150-word re-engagement email for SaaS users who haven't logged in for 30 days. Tone: warm, not pushy. Include one clear CTA."</div>
+            </div>
+            <div style={{ fontSize: "12px", color: "#4a4540", lineHeight: 1.55, textAlign: "center", paddingTop: "2px" }}>
+              Specific prompts get <span style={{ color: "#c9a84c", fontWeight: 600 }}>10× better results</span> — Obsidia AI builds them for you.
+            </div>
+          </div>
+        </div>
+      )}
+      <button onClick={onToggle} style={{ width: "44px", height: "44px", borderRadius: "50%", border: "1px solid rgba(201,168,76,0.25)", background: open ? "rgba(201,168,76,0.12)" : "rgba(14,13,11,0.95)", color: "#c9a84c", fontSize: "18px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 20px rgba(0,0,0,0.5)", transition: "all 0.25s ease", backdropFilter: "blur(8px)" }} title="Why prompts matter">
+        {open ? "×" : "?"}
+      </button>
+    </div>
+  );
+}
 
 function Fade({ children }) { return <div style={{ animation: "fadeUp 0.5s ease forwards" }}>{children}</div>; }
 
